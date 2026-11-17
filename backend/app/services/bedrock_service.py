@@ -1,6 +1,8 @@
 import hashlib
 import json
+import os
 import re
+import urllib.request
 import boto3
 import numpy as np
 from app.config import get_settings
@@ -37,58 +39,70 @@ def get_embedding(text: str) -> list[float]:
             contentType="application/json",
             accept="application/json",
         )
-        payload = json.loads(resp["body"].read())
-        return payload["embedding"]
-    except Exception as e:
-        print(f"[Bedrock Fallback] Using local vector embedding ({e})")
+        return json.loads(resp["body"].read())["embedding"]
+    except Exception:
         return _local_embedding(text)
+
+
+def _call_gemini(prompt: str, system_prompt: str, api_key: str) -> str:
+    url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key={api_key}"
+    payload = json.dumps({
+        "system_instruction": {"parts": [{"text": system_prompt}]},
+        "contents": [{"role": "user", "parts": [{"text": prompt}]}],
+        "generationConfig": {"temperature": 0.2, "maxOutputTokens": 700},
+    }).encode("utf-8")
+    req = urllib.request.Request(url, data=payload, headers={"Content-Type": "application/json"}, method="POST")
+    with urllib.request.urlopen(req, timeout=25) as r:
+        data = json.loads(r.read().decode("utf-8"))
+    return data["candidates"][0]["content"]["parts"][0]["text"].strip()
 
 
 def _extractive_fallback(question: str, chunks: list[dict]) -> str:
     q_words = {w for w in re.findall(r"[a-z0-9]+", question.lower()) if len(w) > 2}
-    scored_sents = []
+    scored = []
     for c in chunks:
-        sents = re.split(r"(?<=[.!?])\s+", c["text"])
-        for s in sents:
-            s_words = set(re.findall(r"[a-z0-9]+", s.lower()))
-            overlap = len(q_words & s_words)
-            if overlap > 0 and len(s.strip()) > 15:
-                scored_sents.append((overlap, s.strip(), c["doc_name"], c["page_number"]))
+        for s in re.split(r"(?<=[.!?])\s+", c["text"]):
+            s_clean = s.strip()
+            if len(s_clean) < 25 or not s_clean[0].isupper():
+                continue
+            overlap = len(q_words & set(re.findall(r"[a-z0-9]+", s_clean.lower())))
+            if overlap > 0:
+                scored.append((overlap, s_clean, c["doc_name"], c["page_number"]))
 
-    if not scored_sents:
+    if not scored:
         return "Information not available in the uploaded documents."
 
-    scored_sents.sort(key=lambda x: x[0], reverse=True)
-    lines = []
+    scored.sort(key=lambda x: x[0], reverse=True)
+    bullets = []
     seen = set()
-    for _, sent, doc, page in scored_sents[:3]:
+    for _, sent, doc, page in scored[:4]:
         if sent not in seen:
             seen.add(sent)
-            lines.append(f"{sent} ({doc}, Page {page})")
-    return "\n\n".join(lines)
+            bullets.append(f"• {sent} ({doc}, Page {page})")
+    return "Based on your uploaded documents:\n\n" + "\n".join(bullets)
 
 
 def generate_rag_answer(question: str, chunks: list[dict], history: list[dict] | None = None) -> str:
     if not chunks:
         return "Information not available in the uploaded documents."
 
+    context_text = "\n\n".join(
+        f"[Source {i} | Document: {c['doc_name']} | Page: {c['page_number']}]\n{c['text']}"
+        for i, c in enumerate(chunks, start=1)
+    )
+
+    system_prompt = (
+        "You are SmartDoc AI, a helpful enterprise document assistant. "
+        "Synthesize a clear, natural, well-structured answer using ONLY the provided Source Passages. "
+        "Cite the document name and page number inline (e.g., (assignment.pdf, Page 3)). "
+        "If the answer is not supported by the Source Passages, reply ONLY with: "
+        "\"Information not available in the uploaded documents.\""
+    )
+    user_prompt = f"Source Passages:\n{context_text}\n\nQuestion: {question}"
+
+    # 1. Try Amazon Bedrock
     try:
         client, cfg = _bedrock_client()
-        context_blocks = [
-            f"[Source {i} | Document: {c['doc_name']} | Page: {c['page_number']}]\n{c['text']}"
-            for i, c in enumerate(chunks, start=1)
-        ]
-        context_text = "\n\n".join(context_blocks)
-
-        system_prompt = (
-            "You are SmartDoc AI, an enterprise document assistant. "
-            "Answer the user's question using ONLY the provided Source Passages below. "
-            "Cite the document name and page number inline (e.g., (assignment.pdf, Page 3)). "
-            "If the answer is not explicitly supported by the Source Passages, reply ONLY with: "
-            "\"Information not available in the uploaded documents.\" "
-            "Do not fabricate or use outside knowledge."
-        )
-
         messages = []
         if history:
             for turn in history[-4:]:
@@ -96,9 +110,7 @@ def generate_rag_answer(question: str, chunks: list[dict], history: list[dict] |
                 content = turn.get("content", "").strip()
                 if content:
                     messages.append({"role": role, "content": [{"text": content}]})
-
-        messages.append({"role": "user", "content": [{"text": f"Source Passages:\n{context_text}\n\nQuestion: {question}"}]})
-
+        messages.append({"role": "user", "content": [{"text": user_prompt}]})
         resp = client.converse(
             modelId=cfg["CHAT_MODEL"],
             system=[{"text": system_prompt}],
@@ -106,6 +118,16 @@ def generate_rag_answer(question: str, chunks: list[dict], history: list[dict] |
             inferenceConfig={"temperature": 0.1, "maxTokens": 600},
         )
         return resp["output"]["message"]["content"][0]["text"].strip()
-    except Exception as e:
-        print(f"[Bedrock Fallback] Using extractive grounded answer ({e})")
-        return _extractive_fallback(question, chunks)
+    except Exception:
+        pass
+
+    # 2. Try Gemini API if GEMINI_API_KEY is configured
+    gemini_key = os.getenv("GEMINI_API_KEY") or get_settings().get("GEMINI_API_KEY", "")
+    if gemini_key:
+        try:
+            return _call_gemini(user_prompt, system_prompt, gemini_key)
+        except Exception:
+            pass
+
+    # 3. Clean bulleted extractive fallback
+    return _extractive_fallback(question, chunks)
