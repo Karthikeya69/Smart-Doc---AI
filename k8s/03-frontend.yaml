@@ -1,0 +1,53 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: smartdoc-frontend
+  labels:
+    app: smartdoc-frontend
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: smartdoc-frontend
+  template:
+    metadata:
+      labels:
+        app: smartdoc-frontend
+    spec:
+      containers:
+        - name: smartdoc-frontend
+          image: 538372952239.dkr.ecr.us-east-1.amazonaws.com/smartdoc-frontend:latest
+          imagePullPolicy: Always
+          ports:
+            - containerPort: 80
+          readinessProbe:
+            httpGet:
+              path: /
+              port: 80
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /
+              port: 80
+            initialDelaySeconds: 10
+            periodSeconds: 20
+          resources:
+            requests:
+              cpu: "100m"
+              memory: "128Mi"
+            limits:
+              cpu: "250m"
+              memory: "256Mi"
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: smartdoc-frontend-svc
+spec:
+  type: LoadBalancer
+  selector:
+    app: smartdoc-frontend
+  ports:
+    - port: 80
+      targetPort: 80

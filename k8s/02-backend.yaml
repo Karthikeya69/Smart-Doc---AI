@@ -1,0 +1,56 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: smartdoc-backend
+  labels:
+    app: smartdoc-backend
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: smartdoc-backend
+  template:
+    metadata:
+      labels:
+        app: smartdoc-backend
+    spec:
+      containers:
+        - name: smartdoc-backend
+          image: 538372952239.dkr.ecr.us-east-1.amazonaws.com/smartdoc-backend:latest
+          imagePullPolicy: Always
+          ports:
+            - containerPort: 8000
+          envFrom:
+            - configMapRef:
+                name: smartdoc-config
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8000
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8000
+            initialDelaySeconds: 15
+            periodSeconds: 20
+          resources:
+            requests:
+              cpu: "250m"
+              memory: "512Mi"
+            limits:
+              cpu: "500m"
+              memory: "1Gi"
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: smartdoc-backend-svc
+spec:
+  type: ClusterIP
+  selector:
+    app: smartdoc-backend
+  ports:
+    - port: 8000
+      targetPort: 8000
