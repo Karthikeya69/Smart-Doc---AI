@@ -12,6 +12,7 @@ export default function App() {
   const [uploading, setUploading] = useState(false);
   const [uploadProgress, setUploadProgress] = useState(0);
   const [uploadingName, setUploadingName] = useState("");
+  const [uploadScope, setUploadScope] = useState("global");
   const [uploadError, setUploadError] = useState("");
   const [question, setQuestion] = useState("");
   const [asking, setAsking] = useState(false);
@@ -83,6 +84,7 @@ export default function App() {
     const files = Array.from(e.target.files || []);
     if (!files.length) return;
     setUploadError("");
+    setUploadScope(scope);
     setUploading(true);
     setUploadProgress(10);
 
@@ -206,7 +208,7 @@ export default function App() {
     }
   };
 
-  const filteredDocs = documents.filter((d) => d.name.toLowerCase().includes(searchDoc.toLowerCase()));
+  const filteredDocs = documents.filter((d) => (!d.chat_id || d.chat_id === "global") && d.name.toLowerCase().includes(searchDoc.toLowerCase()));
   const chatAttachments = documents.filter((d) => d.chat_id === String(activeChat?.id));
 
   const renderUploadBar = () =>
@@ -234,7 +236,7 @@ export default function App() {
             <span className="attach-icon">{doc.type === "image" ? "IMG" : "PDF"}</span>
             <span className="attach-name">{doc.name}</span>
             <button className="attach-x" onClick={(e) => deleteDoc(e, doc.name)} title="Remove attachment">
-              Ã—
+              Ãƒâ€”
             </button>
           </div>
         ))}
@@ -279,7 +281,7 @@ export default function App() {
               />
             </label>
           </div>
-          {renderUploadBar()}
+          {uploadScope === "global" && renderUploadBar()}
           {uploadError && <div className="error-box">{uploadError}</div>}
           <ul className="nav-list">
             {filteredDocs.map((doc) => (
@@ -291,9 +293,8 @@ export default function App() {
               >
                 <span className={`dot ${doc.status === "ready" ? "green" : doc.status === "processing" ? "amber" : "red"}`} />
                 <span className="nav-text">{doc.name}</span>
-                {doc.chat_id && doc.chat_id !== "global" && <span className="chat-tag">chat</span>}
                 <span className="nav-count">{doc.pages || 0}p</span>
-                <button className="del-btn" onClick={(e) => deleteDoc(e, doc.name)} title="Delete">Ã—</button>
+                <button className="del-btn" onClick={(e) => deleteDoc(e, doc.name)} title="Delete">Ãƒâ€”</button>
               </li>
             ))}
           </ul>
@@ -309,7 +310,7 @@ export default function App() {
                 onClick={() => setActiveChatId(c.id)}
               >
                 <span className="nav-text">{c.title}</span>
-                <button className="del-btn" onClick={(e) => deleteChat(e, c.id)} title="Delete chat">Ã—</button>
+                <button className="del-btn" onClick={(e) => deleteChat(e, c.id)} title="Delete chat">Ãƒâ€”</button>
               </li>
             ))}
           </ul>
@@ -319,7 +320,7 @@ export default function App() {
           <div className="avatar">SD</div>
           <div>
             <div className="user-name">SmartDoc Workspace</div>
-            <div className="user-sub">S3 Â· Textract Â· Bedrock</div>
+            <div className="user-sub">S3 Ã‚Â· Textract Ã‚Â· Bedrock</div>
           </div>
         </div>
       </aside>
@@ -349,8 +350,8 @@ export default function App() {
                 sendQuestion();
               }}
             >
-              {renderUploadBar()}
-              {renderChatChips()}
+              {uploadScope === "global" && renderUploadBar()}
+              {uploadScope === "chat" && renderUploadBar()}{renderChatChips()}
               <textarea
                 rows={2}
                 placeholder="Ask a question about your uploaded documents..."
@@ -376,11 +377,10 @@ export default function App() {
                       hidden
                     />
                   </label>
-                  <span className="pill-active">Vector RAG + OCR</span>
                   <span className="pill-muted">{documents.filter((d) => d.status === "ready").length} ready</span>
                 </div>
                 <button className="send-circle" type="submit" disabled={asking || !question.trim()}>
-                  â†‘
+                  Ã¢â€ â€˜
                 </button>
               </div>
             </form>
@@ -403,7 +403,7 @@ export default function App() {
                     {m.role === "assistant" && (
                       <div className="msg-actions">
                         <button className="action-btn" onClick={() => downloadExtractPdf(m.query, m)}>
-                          â†“ Download Extract as PDF
+                          Ã¢â€ â€œ Download Extract as PDF
                         </button>
                         {m.citations?.length > 0 && (
                           <button
@@ -428,7 +428,7 @@ export default function App() {
                             className="cite-pill"
                             onClick={() => openPdfAtPage(c.doc_name, c.view_url, c.page_number)}
                           >
-                            {c.doc_name} Â· p.{c.page_number}
+                            {c.doc_name} Ã‚Â· p.{c.page_number}
                           </button>
                         ))}
                       </div>
@@ -444,8 +444,8 @@ export default function App() {
             </div>
 
             <div className="bottom-dock">
-              {renderUploadBar()}
-              {renderChatChips()}
+              {uploadScope === "global" && renderUploadBar()}
+              {uploadScope === "chat" && renderUploadBar()}{renderChatChips()}
               <form
                 className="bottom-composer"
                 onSubmit={(e) => {
@@ -472,7 +472,7 @@ export default function App() {
                   disabled={asking}
                 />
                 <button className="send-circle" type="submit" disabled={asking || !question.trim()}>
-                  â†‘
+                  Ã¢â€ â€˜
                 </button>
               </form>
             </div>
@@ -497,7 +497,7 @@ export default function App() {
                 <>
                   <div className="pdf-bar">
                     <span>{activePdf.name} (Page {activePdf.page})</span>
-                    <a href={activePdf.url} target="_blank" rel="noreferrer">Open â†—</a>
+                    <a href={activePdf.url} target="_blank" rel="noreferrer">Open Ã¢â€ â€”</a>
                   </div>
                   <iframe key={activePdf.url} src={activePdf.url} title="Document Preview" className="pdf-frame" />
                 </>
@@ -513,9 +513,9 @@ export default function App() {
                 activeCitations.map((c, i) => (
                   <div key={i} className="source-card">
                     <div className="source-head">
-                      <strong>{c.doc_name} Â· Page {c.page_number}</strong>
+                      <strong>{c.doc_name} Ã‚Â· Page {c.page_number}</strong>
                       <button onClick={() => openPdfAtPage(c.doc_name, c.view_url, c.page_number)}>
-                        Jump to p.{c.page_number} â†—
+                        Jump to p.{c.page_number} Ã¢â€ â€”
                       </button>
                     </div>
                     <p>"{c.snippet}"</p>
