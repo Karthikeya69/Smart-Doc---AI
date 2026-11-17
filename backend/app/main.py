@@ -17,6 +17,7 @@ from app.services.vector_service import (
     load_index_from_s3,
     search_chunks,
     upsert_document_meta,
+    delete_document,
 )
 
 app = FastAPI(title="SmartDoc AI API", version="1.1.0")
@@ -127,7 +128,7 @@ def export_pdf(req: ExportPdfRequest):
     doc = SimpleDocTemplate(buf, pagesize=letter, title="SmartDoc AI Extract")
     styles = getSampleStyleSheet()
     story = [
-        Paragraph("SmartDoc AI — Extracted Information", styles["Title"]),
+        Paragraph("SmartDoc AI ??? Extracted Information", styles["Title"]),
         Spacer(1, 12),
         Paragraph(f"<b>Query:</b> {escape(req.question)}", styles["Normal"]),
         Spacer(1, 10),
@@ -150,3 +151,9 @@ def export_pdf(req: ExportPdfRequest):
         media_type="application/pdf",
         headers={"Content-Disposition": 'attachment; filename="smartdoc-extract.pdf"'},
     )
+
+
+@app.delete("/api/documents/{doc_name}")
+def remove_document(doc_name: str):
+    delete_document(doc_name)
+    return {"deleted": doc_name}

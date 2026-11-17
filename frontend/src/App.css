@@ -169,3 +169,8 @@ body { background: #090a0d; color: #e4e4e7; }
   background: none; border: none; color: #60a5fa; font-size: 11px; cursor: pointer;
 }
 .source-card p { font-size: 12px; color: #a1a1aa; font-style: italic; line-height: 1.45; }
+.del-btn {
+  background: none; border: none; color: #71717a; font-size: 14px;
+  cursor: pointer; padding: 0 4px; line-height: 1; opacity: 0.7;
+}
+.del-btn:hover { color: #ef4444; opacity: 1; }

@@ -91,3 +91,14 @@ def search_chunks(query: str, top_k: int = 4, min_score: float = 0.22) -> list[d
             "score": round(score, 3),
         })
     return results
+
+def delete_document(doc_name: str):
+    load_index_from_s3()
+    _STATE["documents"].pop(doc_name, None)
+    _STATE["chunks"] = [c for c in _STATE["chunks"] if c["doc_name"] != doc_name]
+    save_index_to_s3()
+    client, bucket = _s3()
+    try:
+        client.delete_object(Bucket=bucket, Key=f"pdfs/{doc_name}")
+    except Exception:
+        pass
