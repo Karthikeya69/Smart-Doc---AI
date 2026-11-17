@@ -61,9 +61,9 @@ def _extractive_fallback(question: str, chunks: list[dict]) -> str:
     q_words = {w for w in re.findall(r"[a-z0-9]+", question.lower()) if len(w) > 2}
     scored = []
     for c in chunks:
-        for s in re.split(r"(?<=[.!?])\s+", c["text"]):
+        for s in re.split(r"(?<=[.!?])\s+|\n+", c["text"]):
             s_clean = s.strip()
-            if len(s_clean) < 25 or not s_clean[0].isupper():
+            if len(s_clean) < 15:
                 continue
             overlap = len(q_words & set(re.findall(r"[a-z0-9]+", s_clean.lower())))
             if overlap > 0:
@@ -75,11 +75,11 @@ def _extractive_fallback(question: str, chunks: list[dict]) -> str:
     scored.sort(key=lambda x: x[0], reverse=True)
     bullets = []
     seen = set()
-    for _, sent, doc, page in scored[:4]:
+    for _, sent, doc, page in scored[:5]:
         if sent not in seen:
             seen.add(sent)
             bullets.append(f"• {sent} ({doc}, Page {page})")
-    return "Based on your uploaded documents:\n\n" + "\n".join(bullets)
+    return "Key Details Found:\n" + "\n".join(bullets)
 
 
 def generate_rag_answer(question: str, chunks: list[dict], history: list[dict] | None = None) -> str:
@@ -92,15 +92,15 @@ def generate_rag_answer(question: str, chunks: list[dict], history: list[dict] |
     )
 
     system_prompt = (
-        "You are SmartDoc AI, a helpful enterprise document assistant. "
-        "Synthesize a clear, natural, well-structured answer using ONLY the provided Source Passages. "
-        "Cite the document name and page number inline (e.g., (assignment.pdf, Page 3)). "
-        "If the answer is not supported by the Source Passages, reply ONLY with: "
+        "You are SmartDoc AI. Write concise, cleanly structured answers like Claude: "
+        "start with a 1-sentence direct summary, then list neatly mapped bullet points (Key: Value). "
+        "Do NOT write long essays or walls of text. "
+        "Use ONLY the provided Source Passages and cite (doc_name, Page N) inline. "
+        "If the answer is not in the Source Passages, reply ONLY with: "
         "\"Information not available in the uploaded documents.\""
     )
     user_prompt = f"Source Passages:\n{context_text}\n\nQuestion: {question}"
 
-    # 1. Try Amazon Bedrock
     try:
         client, cfg = _bedrock_client()
         messages = []
@@ -121,7 +121,6 @@ def generate_rag_answer(question: str, chunks: list[dict], history: list[dict] |
     except Exception:
         pass
 
-    # 2. Try Gemini API if GEMINI_API_KEY is configured
     gemini_key = os.getenv("GEMINI_API_KEY") or get_settings().get("GEMINI_API_KEY", "")
     if gemini_key:
         try:
@@ -129,5 +128,4 @@ def generate_rag_answer(question: str, chunks: list[dict], history: list[dict] |
         except Exception:
             pass
 
-    # 3. Clean bulleted extractive fallback
     return _extractive_fallback(question, chunks)

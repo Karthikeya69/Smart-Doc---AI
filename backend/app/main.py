@@ -142,32 +142,69 @@ def chat(req: ChatRequest):
     return {"answer": answer, "citations": citations}
 
 
+import re as _re
+from reportlab.lib import colors
+from reportlab.platypus import Table, TableStyle
+
+
+def _smart_pdf_filename(question: str, answer: str) -> str:
+    source = question.strip() if question and len(question.strip()) > 3 else answer[:50]
+    cleaned = _re.sub(r"\b(extract|download|create|make|give|me|as|a|the|pdf|info|information|content|about|what|is|are|can|you|tell)\b", " ", source.lower())
+    slug = _re.sub(r"[^a-z0-9]+", "-", cleaned).strip("-")
+    if not slug:
+        slug = "smartdoc-extract"
+    return f"{slug[:42]}.pdf"
+
+
 @app.post("/api/export/pdf")
 def export_pdf(req: ExportPdfRequest):
+    filename = _smart_pdf_filename(req.question, req.answer)
     buf = BytesIO()
-    doc = SimpleDocTemplate(buf, pagesize=letter, title="SmartDoc AI Extract")
+    doc = SimpleDocTemplate(buf, pagesize=letter, title=filename)
     styles = getSampleStyleSheet()
     story = [
-        Paragraph("SmartDoc AI — Extracted Information", styles["Title"]),
-        Spacer(1, 12),
-        Paragraph(f"<b>Query:</b> {escape(req.question)}", styles["Normal"]),
+        Paragraph("SmartDoc AI — Mapped Document Extract", styles["Title"]),
         Spacer(1, 10),
-        Paragraph("<b>Grounded Answer:</b>", styles["Heading3"]),
-        Paragraph(escape(req.answer).replace("\n", "<br/>"), styles["Normal"]),
-        Spacer(1, 14),
+        Paragraph(f"<b>Topic / Query:</b> {escape(req.question)}", styles["Normal"]),
+        Spacer(1, 12),
+        Paragraph("<b>Extracted &amp; Organized Information:</b>", styles["Heading3"]),
     ]
+
+    for line in req.answer.splitlines():
+        clean_line = line.strip()
+        if clean_line:
+            story.append(Paragraph(escape(clean_line), styles["Normal"]))
+            story.append(Spacer(1, 5))
+
     if req.citations:
-        story.append(Paragraph("<b>Source Citations:</b>", styles["Heading3"]))
+        story.append(Spacer(1, 12))
+        story.append(Paragraph("<b>Mapped Source References:</b>", styles["Heading3"]))
+        table_data = [["Document", "Page", "Supporting Passage"]]
         for c in req.citations:
-            ref = f"{escape(str(c.get('doc_name', '')))} (Page {escape(str(c.get('page_number', '')))})"
-            story.append(Paragraph(f"<b>{ref}</b>", styles["Normal"]))
-            story.append(Paragraph(f"<i>\"{escape(str(c.get('snippet', '')))}\"</i>", styles["Normal"]))
-            story.append(Spacer(1, 8))
+            snippet = str(c.get("snippet", ""))[:180] + ("..." if len(str(c.get("snippet", ""))) > 180 else "")
+            table_data.append([
+                Paragraph(escape(str(c.get("doc_name", ""))), styles["Normal"]),
+                str(c.get("page_number", "")),
+                Paragraph(escape(snippet), styles["Normal"]),
+            ])
+        tbl = Table(table_data, colWidths=[120, 45, 310])
+        tbl.setStyle(TableStyle([
+            ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#18181b")),
+            ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
+            ("GRID", (0, 0), (-1, -1), 0.5, colors.grey),
+            ("VALIGN", (0, 0), (-1, -1), "TOP"),
+            ("PADDING", (0, 0), (-1, -1), 6),
+        ]))
+        story.append(tbl)
 
     doc.build(story)
     buf.seek(0)
     return StreamingResponse(
         buf,
         media_type="application/pdf",
-        headers={"Content-Disposition": 'attachment; filename="smartdoc-extract.pdf"'},
+        headers={
+            "Content-Disposition": f'attachment; filename="{filename}"',
+            "X-Suggested-Filename": filename,
+            "Access-Control-Expose-Headers": "Content-Disposition, X-Suggested-Filename",
+        },
     )

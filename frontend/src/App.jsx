@@ -142,7 +142,8 @@ export default function App() {
       const url = window.URL.createObjectURL(blob);
       const a = document.createElement("a");
       a.href = url;
-      a.download = "smartdoc-extract.pdf";
+      const suggested = res.headers.get("X-Suggested-Filename") || "smartdoc-extract.pdf";
+      a.download = suggested;
       a.click();
       window.URL.revokeObjectURL(url);
     } catch {}
@@ -233,7 +234,7 @@ export default function App() {
             <span className="attach-icon">{doc.type === "image" ? "IMG" : "PDF"}</span>
             <span className="attach-name">{doc.name}</span>
             <button className="attach-x" onClick={(e) => deleteDoc(e, doc.name)} title="Remove attachment">
-              ×
+              Ã—
             </button>
           </div>
         ))}
@@ -292,7 +293,7 @@ export default function App() {
                 <span className="nav-text">{doc.name}</span>
                 {doc.chat_id && doc.chat_id !== "global" && <span className="chat-tag">chat</span>}
                 <span className="nav-count">{doc.pages || 0}p</span>
-                <button className="del-btn" onClick={(e) => deleteDoc(e, doc.name)} title="Delete">×</button>
+                <button className="del-btn" onClick={(e) => deleteDoc(e, doc.name)} title="Delete">Ã—</button>
               </li>
             ))}
           </ul>
@@ -308,7 +309,7 @@ export default function App() {
                 onClick={() => setActiveChatId(c.id)}
               >
                 <span className="nav-text">{c.title}</span>
-                <button className="del-btn" onClick={(e) => deleteChat(e, c.id)} title="Delete chat">×</button>
+                <button className="del-btn" onClick={(e) => deleteChat(e, c.id)} title="Delete chat">Ã—</button>
               </li>
             ))}
           </ul>
@@ -318,7 +319,7 @@ export default function App() {
           <div className="avatar">SD</div>
           <div>
             <div className="user-name">SmartDoc Workspace</div>
-            <div className="user-sub">S3 · Textract · Bedrock</div>
+            <div className="user-sub">S3 Â· Textract Â· Bedrock</div>
           </div>
         </div>
       </aside>
@@ -379,7 +380,7 @@ export default function App() {
                   <span className="pill-muted">{documents.filter((d) => d.status === "ready").length} ready</span>
                 </div>
                 <button className="send-circle" type="submit" disabled={asking || !question.trim()}>
-                  ↑
+                  â†‘
                 </button>
               </div>
             </form>
@@ -402,7 +403,7 @@ export default function App() {
                     {m.role === "assistant" && (
                       <div className="msg-actions">
                         <button className="action-btn" onClick={() => downloadExtractPdf(m.query, m)}>
-                          ↓ Download Extract as PDF
+                          â†“ Download Extract as PDF
                         </button>
                         {m.citations?.length > 0 && (
                           <button
@@ -427,7 +428,7 @@ export default function App() {
                             className="cite-pill"
                             onClick={() => openPdfAtPage(c.doc_name, c.view_url, c.page_number)}
                           >
-                            {c.doc_name} · p.{c.page_number}
+                            {c.doc_name} Â· p.{c.page_number}
                           </button>
                         ))}
                       </div>
@@ -471,7 +472,7 @@ export default function App() {
                   disabled={asking}
                 />
                 <button className="send-circle" type="submit" disabled={asking || !question.trim()}>
-                  ↑
+                  â†‘
                 </button>
               </form>
             </div>
@@ -496,7 +497,7 @@ export default function App() {
                 <>
                   <div className="pdf-bar">
                     <span>{activePdf.name} (Page {activePdf.page})</span>
-                    <a href={activePdf.url} target="_blank" rel="noreferrer">Open ↗</a>
+                    <a href={activePdf.url} target="_blank" rel="noreferrer">Open â†—</a>
                   </div>
                   <iframe key={activePdf.url} src={activePdf.url} title="Document Preview" className="pdf-frame" />
                 </>
@@ -512,9 +513,9 @@ export default function App() {
                 activeCitations.map((c, i) => (
                   <div key={i} className="source-card">
                     <div className="source-head">
-                      <strong>{c.doc_name} · Page {c.page_number}</strong>
+                      <strong>{c.doc_name} Â· Page {c.page_number}</strong>
                       <button onClick={() => openPdfAtPage(c.doc_name, c.view_url, c.page_number)}>
-                        Jump to p.{c.page_number} ↗
+                        Jump to p.{c.page_number} â†—
                       </button>
                     </div>
                     <p>"{c.snippet}"</p>
