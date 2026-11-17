@@ -176,3 +176,44 @@ body { background: #090a0d; color: #f4f4f5; }
   background: none; border: none; color: #d4d4d8; font-size: 11px; cursor: pointer; text-decoration: underline;
 }
 .source-card p { font-size: 12px; color: #a1a1aa; font-style: italic; line-height: 1.45; }
+.upload-progress-wrap {
+  display: flex; flex-direction: column; gap: 5px; padding: 6px 8px;
+  background: #141519; border: 1px solid #27272a; border-radius: 8px;
+}
+.upload-progress-meta {
+  display: flex; justify-content: space-between; font-size: 11px; color: #d4d4d8;
+}
+.upload-progress-track {
+  width: 100%; height: 4px; background: #27272a; border-radius: 999px; overflow: hidden;
+}
+.upload-progress-fill {
+  height: 100%; background: #ffffff; transition: width 0.25s ease;
+}
+
+.attach-chips-row {
+  display: flex; flex-wrap: wrap; gap: 8px; padding-bottom: 4px;
+}
+.attach-chip {
+  display: inline-flex; align-items: center; gap: 7px; padding: 5px 8px 5px 10px;
+  background: #f4f4f5; color: #090a0d; border-radius: 10px; font-size: 12px;
+  font-weight: 500; cursor: pointer;
+}
+.attach-icon {
+  font-size: 10px; font-weight: 700; padding: 2px 5px; border-radius: 4px;
+  background: #090a0d; color: #ffffff;
+}
+.attach-name {
+  max-width: 160px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.attach-x {
+  width: 18px; height: 18px; border-radius: 50%; border: none;
+  background: #d4d4d8; color: #090a0d; font-size: 13px; line-height: 1;
+  display: grid; place-items: center; cursor: pointer;
+}
+.attach-x:hover { background: #090a0d; color: #ffffff; }
+
+.bottom-dock {
+  padding: 10px 24px 14px; border-top: 1px solid #1f2128;
+  display: flex; flex-direction: column; gap: 8px;
+}
+.bottom-dock .bottom-composer { padding: 0; border-top: none; }

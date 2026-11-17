@@ -10,6 +10,8 @@ const QUICK_PROMPTS = [
 export default function App() {
   const [documents, setDocuments] = useState([]);
   const [uploading, setUploading] = useState(false);
+  const [uploadProgress, setUploadProgress] = useState(0);
+  const [uploadingName, setUploadingName] = useState("");
   const [uploadError, setUploadError] = useState("");
   const [question, setQuestion] = useState("");
   const [asking, setAsking] = useState(false);
@@ -82,10 +84,17 @@ export default function App() {
     if (!files.length) return;
     setUploadError("");
     setUploading(true);
+    setUploadProgress(10);
 
     const targetChatId = scope === "chat" ? String(activeChat.id) : "global";
 
     for (const file of files) {
+      setUploadingName(file.name);
+      setUploadProgress(25);
+      const timer = setInterval(() => {
+        setUploadProgress((p) => (p < 88 ? p + 7 : p));
+      }, 450);
+
       const formData = new FormData();
       formData.append("file", file);
       formData.append("chat_id", targetChatId);
@@ -95,10 +104,18 @@ export default function App() {
         if (!res.ok) setUploadError(data.detail || `Failed: ${file.name}`);
       } catch (err) {
         setUploadError(`Upload error: ${err.message}`);
+      } finally {
+        clearInterval(timer);
       }
     }
+
+    setUploadProgress(100);
     await fetchDocuments(activeChat?.id);
-    setUploading(false);
+    setTimeout(() => {
+      setUploading(false);
+      setUploadProgress(0);
+      setUploadingName("");
+    }, 400);
     e.target.value = "";
   };
 
@@ -189,6 +206,39 @@ export default function App() {
   };
 
   const filteredDocs = documents.filter((d) => d.name.toLowerCase().includes(searchDoc.toLowerCase()));
+  const chatAttachments = documents.filter((d) => d.chat_id === String(activeChat?.id));
+
+  const renderUploadBar = () =>
+    uploading && (
+      <div className="upload-progress-wrap">
+        <div className="upload-progress-meta">
+          <span>Processing {uploadingName}...</span>
+          <span>{uploadProgress}%</span>
+        </div>
+        <div className="upload-progress-track">
+          <div className="upload-progress-fill" style={{ width: `${uploadProgress}%` }} />
+        </div>
+      </div>
+    );
+
+  const renderChatChips = () =>
+    chatAttachments.length > 0 && (
+      <div className="attach-chips-row">
+        {chatAttachments.map((doc) => (
+          <div
+            key={doc.name}
+            className="attach-chip"
+            onClick={() => doc.view_url && openPdfAtPage(doc.name, doc.view_url, 1)}
+          >
+            <span className="attach-icon">{doc.type === "image" ? "IMG" : "PDF"}</span>
+            <span className="attach-name">{doc.name}</span>
+            <button className="attach-x" onClick={(e) => deleteDoc(e, doc.name)} title="Remove attachment">
+              ×
+            </button>
+          </div>
+        ))}
+      </div>
+    );
 
   return (
     <div className="shell">
@@ -217,7 +267,7 @@ export default function App() {
           <div className="sb-label-row">
             <span className="sb-label">Documents ({documents.length})</span>
             <label className={`mini-upload ${uploading ? "disabled" : ""}`}>
-              {uploading ? "Uploading..." : "+ Add Doc"}
+              {uploading ? `${uploadProgress}%` : "+ Add Doc"}
               <input
                 type="file"
                 accept=".pdf,.png,.jpg,.jpeg,application/pdf,image/png,image/jpeg"
@@ -228,6 +278,7 @@ export default function App() {
               />
             </label>
           </div>
+          {renderUploadBar()}
           {uploadError && <div className="error-box">{uploadError}</div>}
           <ul className="nav-list">
             {filteredDocs.map((doc) => (
@@ -297,6 +348,8 @@ export default function App() {
                 sendQuestion();
               }}
             >
+              {renderUploadBar()}
+              {renderChatChips()}
               <textarea
                 rows={2}
                 placeholder="Ask a question about your uploaded documents..."
@@ -389,35 +442,39 @@ export default function App() {
               )}
             </div>
 
-            <form
-              className="bottom-composer"
-              onSubmit={(e) => {
-                e.preventDefault();
-                sendQuestion();
-              }}
-            >
-              <label className="pill-btn" title="Attach PDF or Invoice Photo to this chat only">
-                + Attach
+            <div className="bottom-dock">
+              {renderUploadBar()}
+              {renderChatChips()}
+              <form
+                className="bottom-composer"
+                onSubmit={(e) => {
+                  e.preventDefault();
+                  sendQuestion();
+                }}
+              >
+                <label className="pill-btn" title="Attach PDF or Invoice Photo to this chat only">
+                  + Attach
+                  <input
+                    type="file"
+                    accept=".pdf,.png,.jpg,.jpeg,application/pdf,image/png,image/jpeg"
+                    multiple
+                    disabled={uploading}
+                    onChange={(e) => handleUpload(e, "chat")}
+                    hidden
+                  />
+                </label>
                 <input
-                  type="file"
-                  accept=".pdf,.png,.jpg,.jpeg,application/pdf,image/png,image/jpeg"
-                  multiple
-                  disabled={uploading}
-                  onChange={(e) => handleUpload(e, "chat")}
-                  hidden
+                  type="text"
+                  placeholder="Ask a follow-up question..."
+                  value={question}
+                  onChange={(e) => setQuestion(e.target.value)}
+                  disabled={asking}
                 />
-              </label>
-              <input
-                type="text"
-                placeholder="Ask a follow-up question..."
-                value={question}
-                onChange={(e) => setQuestion(e.target.value)}
-                disabled={asking}
-              />
-              <button className="send-circle" type="submit" disabled={asking || !question.trim()}>
-                ↑
-              </button>
-            </form>
+                <button className="send-circle" type="submit" disabled={asking || !question.trim()}>
+                  ↑
+                </button>
+              </form>
+            </div>
           </>
         )}
       </main>
