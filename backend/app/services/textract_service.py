@@ -12,7 +12,6 @@ def extract_pages_with_textract(s3_key: str) -> dict[int, str]:
     )
     job_id = start["JobId"]
 
-    # Poll until Textract finishes processing all PDF pages
     while True:
         resp = client.get_document_text_detection(JobId=job_id)
         status = resp["JobStatus"]
@@ -42,7 +41,15 @@ def extract_pages_with_textract(s3_key: str) -> dict[int, str]:
     return {p: "\n".join(lines) for p, lines in sorted(pages.items())}
 
 
-def chunk_pages(doc_name: str, pages: dict[int, str], chunk_size: int = 700, overlap: int = 120) -> list[dict]:
+def extract_image_with_textract(file_bytes: bytes) -> dict[int, str]:
+    cfg = get_settings()
+    client = boto3.client("textract", region_name=cfg["AWS_REGION"])
+    resp = client.detect_document_text(Document={"Bytes": file_bytes})
+    lines = [b.get("Text", "") for b in resp.get("Blocks", []) if b.get("BlockType") == "LINE"]
+    return {1: "\n".join(lines)}
+
+
+def chunk_pages(doc_name: str, pages: dict[int, str], chat_id: str = "global", chunk_size: int = 700, overlap: int = 120) -> list[dict]:
     chunks = []
     for page_num, text in pages.items():
         clean = " ".join(text.split())
@@ -56,6 +63,7 @@ def chunk_pages(doc_name: str, pages: dict[int, str], chunk_size: int = 700, ove
             chunks.append({
                 "id": f"{doc_name}__p{page_num}__c{idx}",
                 "doc_name": doc_name,
+                "chat_id": chat_id,
                 "page_number": page_num,
                 "text": piece,
             })

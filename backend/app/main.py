@@ -1,6 +1,6 @@
 from io import BytesIO
 from xml.sax.saxutils import escape
-from fastapi import FastAPI, File, HTTPException, UploadFile
+from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
@@ -8,19 +8,23 @@ from reportlab.lib.pagesizes import letter
 from reportlab.lib.styles import getSampleStyleSheet
 from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer
 
-from app.services.s3_service import upload_pdf_to_s3, get_pdf_presigned_url
-from app.services.textract_service import extract_pages_with_textract, chunk_pages
+from app.services.s3_service import upload_file_to_s3, get_pdf_presigned_url
+from app.services.textract_service import (
+    extract_pages_with_textract,
+    extract_image_with_textract,
+    chunk_pages,
+)
 from app.services.bedrock_service import generate_rag_answer
 from app.services.vector_service import (
+    delete_document,
     get_documents,
     index_document_chunks,
     load_index_from_s3,
     search_chunks,
     upsert_document_meta,
-    delete_document,
 )
 
-app = FastAPI(title="SmartDoc AI API", version="1.1.0")
+app = FastAPI(title="SmartDoc AI API", version="1.2.0")
 
 app.add_middleware(
     CORSMiddleware,
@@ -28,6 +32,8 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+ALLOWED_EXTS = (".pdf", ".png", ".jpg", ".jpeg")
 
 
 @app.on_event("startup")
@@ -37,6 +43,7 @@ def startup_event():
 
 class ChatRequest(BaseModel):
     question: str
+    chat_id: str = "global"
     history: list[dict] = []
 
 
@@ -52,8 +59,8 @@ def health():
 
 
 @app.get("/api/documents")
-def list_documents():
-    docs = get_documents()
+def list_documents(chat_id: str = "global"):
+    docs = get_documents(chat_id)
     for d in docs:
         if d.get("status") == "ready":
             d["view_url"] = get_pdf_presigned_url(d["name"])
@@ -61,16 +68,23 @@ def list_documents():
 
 
 @app.post("/api/documents/upload")
-async def upload_document(file: UploadFile = File(...)):
-    if not file.filename or not file.filename.lower().endswith(".pdf"):
-        raise HTTPException(status_code=400, detail="Only PDF files are supported.")
+async def upload_document(file: UploadFile = File(...), chat_id: str = Form("global")):
+    fname = file.filename or ""
+    lower = fname.lower()
+    if not lower.endswith(ALLOWED_EXTS):
+        raise HTTPException(status_code=400, detail="Only PDF, PNG, JPG, and JPEG files are supported.")
 
     content = await file.read()
     if not content:
         raise HTTPException(status_code=400, detail="Uploaded file is empty.")
 
+    is_pdf = lower.endswith(".pdf")
+    ctype = "application/pdf" if is_pdf else ("image/png" if lower.endswith(".png") else "image/jpeg")
+
     meta = {
-        "name": file.filename,
+        "name": fname,
+        "chat_id": chat_id,
+        "type": "pdf" if is_pdf else "image",
         "status": "processing",
         "pages": 0,
         "chunks": 0,
@@ -79,16 +93,16 @@ async def upload_document(file: UploadFile = File(...)):
     upsert_document_meta(meta)
 
     try:
-        s3_key = upload_pdf_to_s3(content, file.filename)
-        pages = extract_pages_with_textract(s3_key)
-        chunks = chunk_pages(file.filename, pages)
-        index_document_chunks(file.filename, chunks)
+        s3_key = upload_file_to_s3(content, fname, content_type=ctype)
+        pages = extract_pages_with_textract(s3_key) if is_pdf else extract_image_with_textract(content)
+        chunks = chunk_pages(fname, pages, chat_id=chat_id)
+        index_document_chunks(fname, chunks)
 
         meta.update({
             "status": "ready",
             "pages": len(pages),
             "chunks": len(chunks),
-            "view_url": get_pdf_presigned_url(file.filename),
+            "view_url": get_pdf_presigned_url(fname),
         })
         upsert_document_meta(meta)
         return meta
@@ -98,12 +112,18 @@ async def upload_document(file: UploadFile = File(...)):
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@app.delete("/api/documents/{doc_name}")
+def remove_document(doc_name: str):
+    delete_document(doc_name)
+    return {"deleted": doc_name}
+
+
 @app.post("/api/chat")
 def chat(req: ChatRequest):
     if not req.question.strip():
         raise HTTPException(status_code=400, detail="Question cannot be empty.")
 
-    retrieved = search_chunks(req.question, top_k=4)
+    retrieved = search_chunks(req.question, chat_id=req.chat_id, top_k=4)
     answer = generate_rag_answer(req.question, retrieved, req.history)
 
     unavailable = "information not available in the uploaded documents" in answer.lower()
@@ -128,7 +148,7 @@ def export_pdf(req: ExportPdfRequest):
     doc = SimpleDocTemplate(buf, pagesize=letter, title="SmartDoc AI Extract")
     styles = getSampleStyleSheet()
     story = [
-        Paragraph("SmartDoc AI ??? Extracted Information", styles["Title"]),
+        Paragraph("SmartDoc AI — Extracted Information", styles["Title"]),
         Spacer(1, 12),
         Paragraph(f"<b>Query:</b> {escape(req.question)}", styles["Normal"]),
         Spacer(1, 10),
@@ -151,9 +171,3 @@ def export_pdf(req: ExportPdfRequest):
         media_type="application/pdf",
         headers={"Content-Disposition": 'attachment; filename="smartdoc-extract.pdf"'},
     )
-
-
-@app.delete("/api/documents/{doc_name}")
-def remove_document(doc_name: str):
-    delete_document(doc_name)
-    return {"deleted": doc_name}

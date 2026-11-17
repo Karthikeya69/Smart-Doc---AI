@@ -4,7 +4,7 @@ const QUICK_PROMPTS = [
   "What is the annual leave entitlement?",
   "How many sick leaves are employees eligible for?",
   "What is the maternity leave policy?",
-  "What is the employee notice period?",
+  "Extract all invoice details from the attached photo",
 ];
 
 export default function App() {
@@ -37,22 +37,23 @@ export default function App() {
     } catch {}
   }, [chats]);
 
-  const fetchDocuments = async () => {
+  const fetchDocuments = async (chatIdOverride) => {
+    const cid = String(chatIdOverride || activeChat?.id || "global");
     try {
-      const res = await fetch("/api/documents");
+      const res = await fetch(`/api/documents?chat_id=${encodeURIComponent(cid)}`);
       const data = await res.json();
       setDocuments(data.documents || []);
     } catch {}
   };
 
   useEffect(() => {
-    fetchDocuments();
-  }, []);
+    fetchDocuments(activeChat?.id);
+  }, [activeChatId]);
 
   const deleteDoc = async (e, name) => {
     e.stopPropagation();
     await fetch(`/api/documents/${encodeURIComponent(name)}`, { method: "DELETE" });
-    fetchDocuments();
+    fetchDocuments(activeChat?.id);
   };
 
   const deleteChat = (e, id) => {
@@ -76,15 +77,18 @@ export default function App() {
     setActiveCitations([]);
   };
 
-  const handleUpload = async (e) => {
+  const handleUpload = async (e, scope = "global") => {
     const files = Array.from(e.target.files || []);
     if (!files.length) return;
     setUploadError("");
     setUploading(true);
 
+    const targetChatId = scope === "chat" ? String(activeChat.id) : "global";
+
     for (const file of files) {
       const formData = new FormData();
       formData.append("file", file);
+      formData.append("chat_id", targetChatId);
       try {
         const res = await fetch("/api/documents/upload", { method: "POST", body: formData });
         const data = await res.json();
@@ -93,7 +97,7 @@ export default function App() {
         setUploadError(`Upload error: ${err.message}`);
       }
     }
-    await fetchDocuments();
+    await fetchDocuments(activeChat?.id);
     setUploading(false);
     e.target.value = "";
   };
@@ -152,7 +156,11 @@ export default function App() {
       const res = await fetch("/api/chat", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ question: trimmed, history: historyPayload }),
+        body: JSON.stringify({
+          question: trimmed,
+          chat_id: String(activeChat.id),
+          history: historyPayload,
+        }),
       });
       const data = await res.json();
       const assistantMsg = res.ok
@@ -184,7 +192,6 @@ export default function App() {
 
   return (
     <div className="shell">
-      {/* Left Sidebar */}
       <aside className="sidebar">
         <div className="sb-top">
           <div className="brand-row">
@@ -210,8 +217,15 @@ export default function App() {
           <div className="sb-label-row">
             <span className="sb-label">Documents ({documents.length})</span>
             <label className={`mini-upload ${uploading ? "disabled" : ""}`}>
-              {uploading ? "Uploading..." : "+ Add PDF"}
-              <input type="file" accept=".pdf,application/pdf" multiple disabled={uploading} onChange={handleUpload} hidden />
+              {uploading ? "Uploading..." : "+ Add Doc"}
+              <input
+                type="file"
+                accept=".pdf,.png,.jpg,.jpeg,application/pdf,image/png,image/jpeg"
+                multiple
+                disabled={uploading}
+                onChange={(e) => handleUpload(e, "global")}
+                hidden
+              />
             </label>
           </div>
           {uploadError && <div className="error-box">{uploadError}</div>}
@@ -221,11 +235,13 @@ export default function App() {
                 key={doc.name}
                 className="nav-item"
                 onClick={() => doc.view_url && openPdfAtPage(doc.name, doc.view_url, 1)}
-                title={doc.status}
+                title={`${doc.status} (${doc.chat_id === "global" ? "All chats" : "This chat only"})`}
               >
                 <span className={`dot ${doc.status === "ready" ? "green" : doc.status === "processing" ? "amber" : "red"}`} />
                 <span className="nav-text">{doc.name}</span>
-                <span className="nav-count">{doc.pages || 0}p</span><button className="del-btn" onClick={(e) => deleteDoc(e, doc.name)} title="Delete PDF">×</button>
+                {doc.chat_id && doc.chat_id !== "global" && <span className="chat-tag">chat</span>}
+                <span className="nav-count">{doc.pages || 0}p</span>
+                <button className="del-btn" onClick={(e) => deleteDoc(e, doc.name)} title="Delete">×</button>
               </li>
             ))}
           </ul>
@@ -240,7 +256,8 @@ export default function App() {
                 className={`nav-item ${c.id === activeChat?.id ? "active" : ""}`}
                 onClick={() => setActiveChatId(c.id)}
               >
-                <span className="nav-text">{c.title}</span><button className="del-btn" onClick={(e) => deleteChat(e, c.id)} title="Delete chat">×</button>
+                <span className="nav-text">{c.title}</span>
+                <button className="del-btn" onClick={(e) => deleteChat(e, c.id)} title="Delete chat">×</button>
               </li>
             ))}
           </ul>
@@ -250,12 +267,11 @@ export default function App() {
           <div className="avatar">SD</div>
           <div>
             <div className="user-name">SmartDoc Workspace</div>
-            <div className="user-sub">S3 Â· Textract Â· Bedrock</div>
+            <div className="user-sub">S3 · Textract · Bedrock</div>
           </div>
         </div>
       </aside>
 
-      {/* Main Center Stage */}
       <main className="main-pane">
         <header className="topbar">
           <div className="breadcrumb">
@@ -271,8 +287,8 @@ export default function App() {
         {messages.length === 0 ? (
           <div className="start-stage">
             <div className="orb" />
-            <h1 className="hero-title">Ask anything about your PDFs</h1>
-            <p className="hero-sub">Upload HR policies, manuals, or contracts. Every answer is grounded with page citations.</p>
+            <h1 className="hero-title">Ask anything about your PDFs or Photos</h1>
+            <p className="hero-sub">Upload HR policies, contracts, or invoice photos. Chat attachments stay private to this chat.</p>
 
             <form
               className="composer-card"
@@ -296,14 +312,21 @@ export default function App() {
               <div className="composer-bar">
                 <div className="pills">
                   <label className="pill-btn">
-                    + Attach PDF
-                    <input type="file" accept=".pdf,application/pdf" multiple disabled={uploading} onChange={handleUpload} hidden />
+                    + Attach PDF / Photo
+                    <input
+                      type="file"
+                      accept=".pdf,.png,.jpg,.jpeg,application/pdf,image/png,image/jpeg"
+                      multiple
+                      disabled={uploading}
+                      onChange={(e) => handleUpload(e, "chat")}
+                      hidden
+                    />
                   </label>
-                  <span className="pill-active">Vector RAG</span>
-                  <span className="pill-muted">{documents.filter((d) => d.status === "ready").length} docs ready</span>
+                  <span className="pill-active">Vector RAG + OCR</span>
+                  <span className="pill-muted">{documents.filter((d) => d.status === "ready").length} ready</span>
                 </div>
                 <button className="send-circle" type="submit" disabled={asking || !question.trim()}>
-                  â†‘
+                  ↑
                 </button>
               </div>
             </form>
@@ -326,7 +349,7 @@ export default function App() {
                     {m.role === "assistant" && (
                       <div className="msg-actions">
                         <button className="action-btn" onClick={() => downloadExtractPdf(m.query, m)}>
-                          â†“ Download Extract as PDF
+                          ↓ Download Extract as PDF
                         </button>
                         {m.citations?.length > 0 && (
                           <button
@@ -351,7 +374,7 @@ export default function App() {
                             className="cite-pill"
                             onClick={() => openPdfAtPage(c.doc_name, c.view_url, c.page_number)}
                           >
-                            {c.doc_name} Â· p.{c.page_number}
+                            {c.doc_name} · p.{c.page_number}
                           </button>
                         ))}
                       </div>
@@ -373,6 +396,17 @@ export default function App() {
                 sendQuestion();
               }}
             >
+              <label className="pill-btn" title="Attach PDF or Invoice Photo to this chat only">
+                + Attach
+                <input
+                  type="file"
+                  accept=".pdf,.png,.jpg,.jpeg,application/pdf,image/png,image/jpeg"
+                  multiple
+                  disabled={uploading}
+                  onChange={(e) => handleUpload(e, "chat")}
+                  hidden
+                />
+              </label>
               <input
                 type="text"
                 placeholder="Ask a follow-up question..."
@@ -381,19 +415,18 @@ export default function App() {
                 disabled={asking}
               />
               <button className="send-circle" type="submit" disabled={asking || !question.trim()}>
-                â†‘
+                ↑
               </button>
             </form>
           </>
         )}
       </main>
 
-      {/* Right Split-Shell Inspector */}
       {inspectorOpen && (
         <aside className="inspector">
           <div className="insp-tabs">
             <button className={inspectorTab === "pdf" ? "active" : ""} onClick={() => setInspectorTab("pdf")}>
-              PDF Viewer
+              Document Viewer
             </button>
             <button className={inspectorTab === "sources" ? "active" : ""} onClick={() => setInspectorTab("sources")}>
               Sources ({activeCitations.length})
@@ -406,12 +439,12 @@ export default function App() {
                 <>
                   <div className="pdf-bar">
                     <span>{activePdf.name} (Page {activePdf.page})</span>
-                    <a href={activePdf.url} target="_blank" rel="noreferrer">Open â†—</a>
+                    <a href={activePdf.url} target="_blank" rel="noreferrer">Open ↗</a>
                   </div>
-                  <iframe key={activePdf.url} src={activePdf.url} title="PDF Preview" className="pdf-frame" />
+                  <iframe key={activePdf.url} src={activePdf.url} title="Document Preview" className="pdf-frame" />
                 </>
               ) : (
-                <div className="insp-empty">Click any document or citation to view the PDF at its exact page.</div>
+                <div className="insp-empty">Click any document or citation to view it here.</div>
               )}
             </div>
           ) : (
@@ -422,9 +455,9 @@ export default function App() {
                 activeCitations.map((c, i) => (
                   <div key={i} className="source-card">
                     <div className="source-head">
-                      <strong>{c.doc_name} Â· Page {c.page_number}</strong>
+                      <strong>{c.doc_name} · Page {c.page_number}</strong>
                       <button onClick={() => openPdfAtPage(c.doc_name, c.view_url, c.page_number)}>
-                        Jump to p.{c.page_number} â†—
+                        Jump to p.{c.page_number} ↗
                       </button>
                     </div>
                     <p>"{c.snippet}"</p>

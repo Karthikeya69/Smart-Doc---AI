@@ -7,14 +7,14 @@ def _s3_client():
     return boto3.client("s3", region_name=cfg["AWS_REGION"]), cfg["S3_BUCKET"]
 
 
-def upload_pdf_to_s3(file_bytes: bytes, filename: str) -> str:
+def upload_file_to_s3(file_bytes: bytes, filename: str, content_type: str = "application/pdf") -> str:
     client, bucket = _s3_client()
     s3_key = f"pdfs/{filename}"
     client.put_object(
         Bucket=bucket,
         Key=s3_key,
         Body=file_bytes,
-        ContentType="application/pdf",
+        ContentType=content_type,
         ContentDisposition="inline",
     )
     return s3_key
