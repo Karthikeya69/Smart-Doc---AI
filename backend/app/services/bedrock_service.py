@@ -44,25 +44,38 @@ def get_embedding(text: str) -> list[float]:
         return _local_embedding(text)
 
 
-def _call_gemini(prompt: str, system_prompt: str, api_key: str) -> str:
-    last_err = None
-    for model in ("gemini-2.5-flash", "gemini-2.0-flash"):
-        try:
-            url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={api_key}"
-            payload = json.dumps({
-                "system_instruction": {"parts": [{"text": system_prompt}]},
-                "contents": [{"role": "user", "parts": [{"text": prompt}]}],
-                "generationConfig": {"temperature": 0.2, "maxOutputTokens": 700},
-            }).encode("utf-8")
-            req = urllib.request.Request(url, data=payload, headers={"Content-Type": "application/json"}, method="POST")
-            with urllib.request.urlopen(req, timeout=25) as r:
-                data = json.loads(r.read().decode("utf-8"))
-            return data["candidates"][0]["content"]["parts"][0]["text"].strip()
-        except Exception as e:
-            last_err = e
-            print(f"[Gemini {model} Error] {e}", flush=True)
-    raise RuntimeError(f"Gemini failed: {last_err}")
+_CACHED_GEMINI_MODEL = None
 
+
+def _pick_gemini_model(api_key: str) -> str:
+    global _CACHED_GEMINI_MODEL
+    if _CACHED_GEMINI_MODEL:
+        return _CACHED_GEMINI_MODEL
+    list_url = f"https://generativelanguage.googleapis.com/v1beta/models?key={api_key}"
+    with urllib.request.urlopen(list_url, timeout=15) as r:
+        models = json.loads(r.read().decode("utf-8")).get("models", [])
+    candidates = [
+        m["name"] for m in models
+        if "generateContent" in m.get("supportedGenerationMethods", []) and "gemini" in m.get("name", "").lower()
+    ]
+    flash = [n for n in candidates if "flash" in n.lower()]
+    _CACHED_GEMINI_MODEL = flash[0] if flash else candidates[0]
+    print(f"[Gemini Selected Model] {_CACHED_GEMINI_MODEL}", flush=True)
+    return _CACHED_GEMINI_MODEL
+
+
+def _call_gemini(prompt: str, system_prompt: str, api_key: str) -> str:
+    model_name = _pick_gemini_model(api_key)
+    url = f"https://generativelanguage.googleapis.com/v1beta/{model_name}:generateContent?key={api_key}"
+    payload = json.dumps({
+        "system_instruction": {"parts": [{"text": system_prompt}]},
+        "contents": [{"role": "user", "parts": [{"text": prompt}]}],
+        "generationConfig": {"temperature": 0.2, "maxOutputTokens": 700},
+    }).encode("utf-8")
+    req = urllib.request.Request(url, data=payload, headers={"Content-Type": "application/json"}, method="POST")
+    with urllib.request.urlopen(req, timeout=25) as r:
+        data = json.loads(r.read().decode("utf-8"))
+    return data["candidates"][0]["content"]["parts"][0]["text"].strip()
 
 def _extractive_fallback(question: str, chunks: list[dict]) -> str:
     q_words = {w for w in re.findall(r"[a-z0-9]+", question.lower()) if len(w) > 2}

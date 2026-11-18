@@ -7,7 +7,7 @@ const QUICK_PROMPTS = [
   "Extract all invoice details from the attached photo",
 ];
 
-const wantsPdf = (text = "") => /\b(pdf|export|download|extract|make it pdf)\b/i.test(text);
+const wantsPdf = (text = "") => /\b(make it pdf|make a pdf|create pdf|export as pdf|download as pdf|download pdf|extract as pdf|as a pdf)\b/i.test(text);
 
 const IconClose = () => (
   <svg width="11" height="11" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round">
