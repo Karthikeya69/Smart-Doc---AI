@@ -124,7 +124,8 @@ def chat(req: ChatRequest):
         raise HTTPException(status_code=400, detail="Question cannot be empty.")
 
     retrieved = search_chunks(req.question, chat_id=req.chat_id, top_k=4)
-    answer = generate_rag_answer(req.question, retrieved, req.history)
+    available_docs = [d["name"] for d in get_documents(req.chat_id) if d.get("status") == "ready"]
+    answer = generate_rag_answer(req.question, retrieved, req.history, available_docs)
 
     unavailable = "information not available in the uploaded documents" in answer.lower()
     citations = []
@@ -163,7 +164,7 @@ def export_pdf(req: ExportPdfRequest):
     doc = SimpleDocTemplate(buf, pagesize=letter, title=filename)
     styles = getSampleStyleSheet()
     story = [
-        Paragraph("SmartDoc AI — Mapped Document Extract", styles["Title"]),
+        Paragraph("SmartDoc AI â€” Mapped Document Extract", styles["Title"]),
         Spacer(1, 10),
         Paragraph(f"<b>Topic / Query:</b> {escape(req.question)}", styles["Normal"]),
         Spacer(1, 12),

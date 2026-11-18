@@ -77,6 +77,14 @@ def delete_document(doc_name: str):
 def search_chunks(query: str, chat_id: str = "global", top_k: int = 5, min_score: float = 0.08) -> list[dict]:
     load_index_from_s3()
     allowed = [c for c in _STATE["chunks"] if c.get("chat_id", "global") in ("global", chat_id)]
+    if allowed:
+        q_tokens = {w for w in re.findall(r"[a-z0-9]+", query.lower()) if len(w) > 2}
+        matched_docs = {
+            c["doc_name"] for c in allowed
+            if q_tokens & set(re.findall(r"[a-z0-9]+", c["doc_name"].lower()))
+        }
+        if matched_docs:
+            allowed = [c for c in allowed if c["doc_name"] in matched_docs]
     if not allowed:
         return []
 

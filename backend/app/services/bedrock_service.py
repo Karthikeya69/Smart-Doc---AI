@@ -78,11 +78,11 @@ def _extractive_fallback(question: str, chunks: list[dict]) -> str:
     for _, sent, doc, page in scored[:5]:
         if sent not in seen:
             seen.add(sent)
-            bullets.append(f"• {sent} ({doc}, Page {page})")
+            bullets.append(f"â€¢ {sent} ({doc}, Page {page})")
     return "Key Details Found:\n" + "\n".join(bullets)
 
 
-def generate_rag_answer(question: str, chunks: list[dict], history: list[dict] | None = None) -> str:
+def generate_rag_answer(question: str, chunks: list[dict], history: list[dict] | None = None, available_docs: list[str] | None = None) -> str:
     if not chunks:
         return "Information not available in the uploaded documents."
 
@@ -92,7 +92,7 @@ def generate_rag_answer(question: str, chunks: list[dict], history: list[dict] |
     )
 
     system_prompt = (
-        "You are SmartDoc AI. Write concise, cleanly structured answers like Claude: "
+        "You are SmartDoc AI, an intelligent document agent like Claude. Available documents: " + (", ".join(available_docs) if available_docs else "none") + ". If the user asks a broad question across multiple unrelated PDFs, briefly clarify which document they want or organize by document name. Write concise, cleanly structured answers: "
         "start with a 1-sentence direct summary, then list neatly mapped bullet points (Key: Value). "
         "Do NOT write long essays or walls of text. "
         "Use ONLY the provided Source Passages and cite (doc_name, Page N) inline. "
