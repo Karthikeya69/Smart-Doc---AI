@@ -144,19 +144,25 @@ export default function App() {
       const url = window.URL.createObjectURL(blob);
       const a = document.createElement("a");
       a.href = url;
-      const suggested = res.headers.get("X-Suggested-Filename") || "smartdoc-extract.pdf";
-      a.download = suggested;
+      a.download = res.headers.get("X-Suggested-Filename") || "smartdoc-extract.pdf";
       a.click();
       window.URL.revokeObjectURL(url);
     } catch {}
   };
+
+  const chatAttachments = documents.filter((d) => d.chat_id === String(activeChat?.id));
 
   const sendQuestion = async (textOverride) => {
     const trimmed = (textOverride ?? question).trim();
     if (!trimmed || asking) return;
 
     const historyPayload = messages.slice(-6).map((m) => ({ role: m.role, content: m.content }));
-    const userMsg = { role: "user", content: trimmed, citations: [] };
+    const userMsg = {
+      role: "user",
+      content: trimmed,
+      attachments: chatAttachments.map((d) => ({ name: d.name, type: d.type })),
+      citations: [],
+    };
 
     setChats((prev) =>
       prev.map((c) =>
@@ -208,8 +214,9 @@ export default function App() {
     }
   };
 
-  const filteredDocs = documents.filter((d) => (!d.chat_id || d.chat_id === "global") && d.name.toLowerCase().includes(searchDoc.toLowerCase()));
-  const chatAttachments = documents.filter((d) => d.chat_id === String(activeChat?.id));
+  const filteredDocs = documents.filter(
+    (d) => (!d.chat_id || d.chat_id === "global") && d.name.toLowerCase().includes(searchDoc.toLowerCase())
+  );
 
   const renderUploadBar = () =>
     uploading && (
@@ -236,7 +243,7 @@ export default function App() {
             <span className="attach-icon">{doc.type === "image" ? "IMG" : "PDF"}</span>
             <span className="attach-name">{doc.name}</span>
             <button className="attach-x" onClick={(e) => deleteDoc(e, doc.name)} title="Remove attachment">
-              Ãƒâ€”
+              &times;
             </button>
           </div>
         ))}
@@ -268,9 +275,9 @@ export default function App() {
 
         <div className="sb-section">
           <div className="sb-label-row">
-            <span className="sb-label">Documents ({documents.length})</span>
+            <span className="sb-label">Documents ({filteredDocs.length})</span>
             <label className={`mini-upload ${uploading ? "disabled" : ""}`}>
-              {uploading ? `${uploadProgress}%` : "+ Add Doc"}
+              {uploading && uploadScope === "global" ? `${uploadProgress}%` : "+ Add Doc"}
               <input
                 type="file"
                 accept=".pdf,.png,.jpg,.jpeg,application/pdf,image/png,image/jpeg"
@@ -289,12 +296,12 @@ export default function App() {
                 key={doc.name}
                 className="nav-item"
                 onClick={() => doc.view_url && openPdfAtPage(doc.name, doc.view_url, 1)}
-                title={`${doc.status} (${doc.chat_id === "global" ? "All chats" : "This chat only"})`}
+                title={doc.status}
               >
                 <span className={`dot ${doc.status === "ready" ? "green" : doc.status === "processing" ? "amber" : "red"}`} />
                 <span className="nav-text">{doc.name}</span>
                 <span className="nav-count">{doc.pages || 0}p</span>
-                <button className="del-btn" onClick={(e) => deleteDoc(e, doc.name)} title="Delete">Ãƒâ€”</button>
+                <button className="del-btn" onClick={(e) => deleteDoc(e, doc.name)} title="Delete">&times;</button>
               </li>
             ))}
           </ul>
@@ -310,7 +317,7 @@ export default function App() {
                 onClick={() => setActiveChatId(c.id)}
               >
                 <span className="nav-text">{c.title}</span>
-                <button className="del-btn" onClick={(e) => deleteChat(e, c.id)} title="Delete chat">Ãƒâ€”</button>
+                <button className="del-btn" onClick={(e) => deleteChat(e, c.id)} title="Delete chat">&times;</button>
               </li>
             ))}
           </ul>
@@ -320,7 +327,7 @@ export default function App() {
           <div className="avatar">SD</div>
           <div>
             <div className="user-name">SmartDoc Workspace</div>
-            <div className="user-sub">S3 Ã‚Â· Textract Ã‚Â· Bedrock</div>
+            <div className="user-sub">EKS &middot; S3 &middot; Textract</div>
           </div>
         </div>
       </aside>
@@ -350,8 +357,8 @@ export default function App() {
                 sendQuestion();
               }}
             >
-              {uploadScope === "global" && renderUploadBar()}
-              {uploadScope === "chat" && renderUploadBar()}{renderChatChips()}
+              {uploadScope === "chat" && renderUploadBar()}
+              {renderChatChips()}
               <textarea
                 rows={2}
                 placeholder="Ask a question about your uploaded documents..."
@@ -380,7 +387,7 @@ export default function App() {
                   <span className="pill-muted">{documents.filter((d) => d.status === "ready").length} ready</span>
                 </div>
                 <button className="send-circle" type="submit" disabled={asking || !question.trim()}>
-                  Ã¢â€ â€˜
+                  &#8593;
                 </button>
               </div>
             </form>
@@ -399,11 +406,20 @@ export default function App() {
               {messages.map((m, idx) => (
                 <div key={idx} className={`msg-row ${m.role}`}>
                   <div className="msg-card">
+                    {m.attachments && m.attachments.length > 0 && (
+                      <div className="sent-attach-row">
+                        {m.attachments.map((a, aIdx) => (
+                          <span key={aIdx} className="sent-attach-pill">
+                            {a.type === "image" ? "IMG" : "PDF"}: {a.name}
+                          </span>
+                        ))}
+                      </div>
+                    )}
                     <div className="msg-body">{m.content}</div>
                     {m.role === "assistant" && (
                       <div className="msg-actions">
                         <button className="action-btn" onClick={() => downloadExtractPdf(m.query, m)}>
-                          Ã¢â€ â€œ Download Extract as PDF
+                          &#8595; Download Extract as PDF
                         </button>
                         {m.citations?.length > 0 && (
                           <button
@@ -428,7 +444,7 @@ export default function App() {
                             className="cite-pill"
                             onClick={() => openPdfAtPage(c.doc_name, c.view_url, c.page_number)}
                           >
-                            {c.doc_name} Ã‚Â· p.{c.page_number}
+                            {c.doc_name} &middot; p.{c.page_number}
                           </button>
                         ))}
                       </div>
@@ -444,8 +460,8 @@ export default function App() {
             </div>
 
             <div className="bottom-dock">
-              {uploadScope === "global" && renderUploadBar()}
-              {uploadScope === "chat" && renderUploadBar()}{renderChatChips()}
+              {uploadScope === "chat" && renderUploadBar()}
+              {renderChatChips()}
               <form
                 className="bottom-composer"
                 onSubmit={(e) => {
@@ -472,7 +488,7 @@ export default function App() {
                   disabled={asking}
                 />
                 <button className="send-circle" type="submit" disabled={asking || !question.trim()}>
-                  Ã¢â€ â€˜
+                  &#8593;
                 </button>
               </form>
             </div>
@@ -497,7 +513,7 @@ export default function App() {
                 <>
                   <div className="pdf-bar">
                     <span>{activePdf.name} (Page {activePdf.page})</span>
-                    <a href={activePdf.url} target="_blank" rel="noreferrer">Open Ã¢â€ â€”</a>
+                    <a href={activePdf.url} target="_blank" rel="noreferrer">Open &#8599;</a>
                   </div>
                   <iframe key={activePdf.url} src={activePdf.url} title="Document Preview" className="pdf-frame" />
                 </>
@@ -513,9 +529,9 @@ export default function App() {
                 activeCitations.map((c, i) => (
                   <div key={i} className="source-card">
                     <div className="source-head">
-                      <strong>{c.doc_name} Ã‚Â· Page {c.page_number}</strong>
+                      <strong>{c.doc_name} &middot; Page {c.page_number}</strong>
                       <button onClick={() => openPdfAtPage(c.doc_name, c.view_url, c.page_number)}>
-                        Jump to p.{c.page_number} Ã¢â€ â€”
+                        Jump to p.{c.page_number} &#8599;
                       </button>
                     </div>
                     <p>"{c.snippet}"</p>

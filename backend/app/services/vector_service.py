@@ -40,8 +40,7 @@ def save_index_to_s3():
 
 
 def get_documents(chat_id: str | None = None) -> list[dict]:
-    if not _STATE["documents"]:
-        load_index_from_s3()
+    load_index_from_s3()
     docs = list(_STATE["documents"].values())
     if chat_id:
         return [d for d in docs if d.get("chat_id", "global") in ("global", chat_id)]
@@ -49,11 +48,13 @@ def get_documents(chat_id: str | None = None) -> list[dict]:
 
 
 def upsert_document_meta(doc_meta: dict):
+    load_index_from_s3()
     _STATE["documents"][doc_meta["name"]] = doc_meta
     save_index_to_s3()
 
 
 def index_document_chunks(doc_name: str, chunks: list[dict]):
+    load_index_from_s3()
     _STATE["chunks"] = [c for c in _STATE["chunks"] if c["doc_name"] != doc_name]
     for c in chunks:
         c["embedding"] = get_embedding(c["text"])
@@ -73,10 +74,8 @@ def delete_document(doc_name: str):
         pass
 
 
-def search_chunks(query: str, chat_id: str = "global", top_k: int = 4, min_score: float = 0.20) -> list[dict]:
-    if not _STATE["chunks"]:
-        load_index_from_s3()
-
+def search_chunks(query: str, chat_id: str = "global", top_k: int = 5, min_score: float = 0.08) -> list[dict]:
+    load_index_from_s3()
     allowed = [c for c in _STATE["chunks"] if c.get("chat_id", "global") in ("global", chat_id)]
     if not allowed:
         return []
@@ -90,7 +89,7 @@ def search_chunks(query: str, chat_id: str = "global", top_k: int = 4, min_score
         cos_sim = float(np.dot(q_vec, c_vec))
         c_words = set(re.findall(r"\w+", c["text"].lower()))
         kw_overlap = len(q_words & c_words) / max(len(q_words), 1)
-        hybrid_score = cos_sim + 0.15 * kw_overlap
+        hybrid_score = cos_sim + 0.20 * kw_overlap
         if hybrid_score >= min_score:
             scored.append((hybrid_score, c))
 
