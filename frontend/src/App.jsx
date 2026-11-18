@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 const QUICK_PROMPTS = [
   "What is the annual leave entitlement?",
@@ -7,7 +7,38 @@ const QUICK_PROMPTS = [
   "Extract all invoice details from the attached photo",
 ];
 
-const wantsPdf = (text = "") => /\b(make it pdf|make a pdf|create pdf|export as pdf|download as pdf|download pdf|extract as pdf|as a pdf)\b/i.test(text);
+const HOVER_CSS = `
+.hover-actions { display: inline-flex; gap: 6px; opacity: 0; transition: opacity 0.15s ease; }
+.msg-card:hover .hover-actions,
+.hover-actions:focus-within { opacity: 1; }
+@media (hover: none) { .hover-actions { opacity: 1; } }
+.edit-box { width: 100%; box-sizing: border-box; resize: vertical; min-height: 60px; background: transparent; color: inherit; border: 1px solid rgba(128,128,128,0.5); border-radius: 8px; padding: 8px 10px; font: inherit; line-height: 1.4; outline: none; }
+.edit-box:focus { border-color: rgba(128,128,128,0.9); }
+.edit-hint { font-size: 12px; opacity: 0.6; margin-top: 6px; }
+.typing-dots { display: inline-flex; align-items: center; gap: 5px; padding: 6px 2px; }
+.typing-dots span { width: 7px; height: 7px; border-radius: 50%; background: currentColor; opacity: 0.35; animation: typing-bounce 1.2s infinite ease-in-out; }
+.typing-dots span:nth-child(2) { animation-delay: 0.15s; }
+.typing-dots span:nth-child(3) { animation-delay: 0.3s; }
+@keyframes typing-bounce {
+  0%, 60%, 100% { transform: translateY(0); opacity: 0.35; }
+  30% { transform: translateY(-5px); opacity: 1; }
+}
+`;
+
+// Convert-only exchanges ("make it doc") are not real Q&A, so they are kept out of the history sent to the backend.
+const buildHistory = (msgs) => {
+  const out = [];
+  for (let i = 0; i < msgs.length; i++) {
+    const m = msgs[i];
+    if (msgs[i + 1]?.exportOnly) {
+      i += 1;
+      continue;
+    }
+    if (m.exportOnly) continue;
+    out.push({ role: m.role, content: m.content });
+  }
+  return out.slice(-6);
+};
 
 const IconClose = () => (
   <svg width="11" height="11" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round">
@@ -37,6 +68,10 @@ export default function App() {
   const [question, setQuestion] = useState("");
   const [asking, setAsking] = useState(false);
   const [searchDoc, setSearchDoc] = useState("");
+  const [copiedKey, setCopiedKey] = useState("");
+  const [editingIdx, setEditingIdx] = useState(null);
+  const [editText, setEditText] = useState("");
+  const followUpRef = useRef(null);
   const [chats, setChats] = useState(() => {
     try {
       const saved = localStorage.getItem("smartdoc_chats");
@@ -60,6 +95,14 @@ export default function App() {
     } catch {}
   }, [chats]);
 
+  // Auto-grow the follow-up box up to ~6 lines; shrink back after sending.
+  useEffect(() => {
+    const el = followUpRef.current;
+    if (!el) return;
+    el.style.height = "auto";
+    el.style.height = Math.min(el.scrollHeight, 140) + "px";
+  }, [question, messages.length]);
+
   const fetchDocuments = async (chatIdOverride) => {
     const cid = String(chatIdOverride || activeChat?.id || "global");
     try {
@@ -71,6 +114,7 @@ export default function App() {
 
   useEffect(() => {
     setPendingAttachments([]);
+    setEditingIdx(null);
     fetchDocuments(activeChat?.id);
   }, [activeChatId]);
 
@@ -101,6 +145,7 @@ export default function App() {
     setActiveChatId(newId);
     setPendingAttachments([]);
     setActiveCitations([]);
+    setEditingIdx(null);
   };
 
   const handleUpload = async (e, scope = "global") => {
@@ -154,14 +199,17 @@ export default function App() {
     setInspectorOpen(true);
   };
 
-  const downloadExtractPdf = async (qText, msg) => {
+  const downloadExtract = async (msg) => {
+    const format = msg.exportFormat;
+    if (!format) return;
     try {
-      const res = await fetch("/api/export/pdf", {
+      const res = await fetch("/api/export", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          question: qText || "Extracted Information",
-          answer: msg.content,
+          format,
+          question: msg.exportQuestion || msg.query || "Extracted Information",
+          answer: msg.exportAnswer || msg.content,
           citations: msg.citations || [],
         }),
       });
@@ -170,18 +218,57 @@ export default function App() {
       const url = window.URL.createObjectURL(blob);
       const a = document.createElement("a");
       a.href = url;
-      a.download = res.headers.get("X-Suggested-Filename") || "smartdoc-extract.pdf";
+      a.download = res.headers.get("X-Suggested-Filename") || `smartdoc-extract.${format}`;
       a.click();
       window.URL.revokeObjectURL(url);
     } catch {}
   };
 
-  const sendQuestion = async (textOverride) => {
+  const copyText = async (text, key) => {
+    try {
+      await navigator.clipboard.writeText(text || "");
+    } catch {
+      // Fallback for plain-HTTP pages, where navigator.clipboard is blocked
+      const ta = document.createElement("textarea");
+      ta.value = text || "";
+      ta.style.position = "fixed";
+      ta.style.opacity = "0";
+      document.body.appendChild(ta);
+      ta.select();
+      document.execCommand("copy");
+      document.body.removeChild(ta);
+    }
+    setCopiedKey(key);
+    setTimeout(() => setCopiedKey((k) => (k === key ? "" : k)), 1500);
+  };
+
+  const startEdit = (idx) => {
+    setEditingIdx(idx);
+    setEditText(messages[idx]?.content || "");
+  };
+
+  const cancelEdit = () => {
+    setEditingIdx(null);
+    setEditText("");
+  };
+
+  const submitEdit = () => {
+    const text = editText.trim();
+    if (!text || editingIdx === null || asking) return;
+    const idx = editingIdx;
+    setEditingIdx(null);
+    setEditText("");
+    sendQuestion(text, idx);
+  };
+
+  // baseIdx: when set, the conversation is cut back to messages[0..baseIdx) before sending (used by Edit).
+  const sendQuestion = async (textOverride, baseIdx) => {
     const trimmed = (textOverride ?? question).trim();
     if (!trimmed || asking) return;
 
-    const historyPayload = messages.slice(-6).map((m) => ({ role: m.role, content: m.content }));
-    const sentFiles = [...pendingAttachments];
+    const priorMessages = baseIdx === undefined ? messages : messages.slice(0, baseIdx);
+    const historyPayload = buildHistory(priorMessages);
+    const sentFiles = baseIdx === undefined ? [...pendingAttachments] : [];
     const userMsg = {
       role: "user",
       content: trimmed,
@@ -190,18 +277,18 @@ export default function App() {
     };
 
     setChats((prev) =>
-      prev.map((c) =>
-        c.id === activeChat.id
-          ? {
-              ...c,
-              title: c.messages.length === 0 ? trimmed.slice(0, 32) : c.title,
-              messages: [...c.messages, userMsg],
-            }
-          : c
-      )
+      prev.map((c) => {
+        if (c.id !== activeChat.id) return c;
+        const prior = baseIdx === undefined ? c.messages : c.messages.slice(0, baseIdx);
+        return {
+          ...c,
+          title: prior.length === 0 ? trimmed.slice(0, 32) : c.title,
+          messages: [...prior, userMsg],
+        };
+      })
     );
     setPendingAttachments([]);
-    setQuestion("");
+    if (baseIdx === undefined) setQuestion("");
     setAsking(true);
 
     try {
@@ -216,7 +303,16 @@ export default function App() {
       });
       const data = await res.json();
       const assistantMsg = res.ok
-        ? { role: "assistant", content: data.answer, citations: data.citations || [], query: trimmed }
+        ? {
+            role: "assistant",
+            content: data.answer,
+            citations: data.citations || [],
+            query: trimmed,
+            exportFormat: data.export_format || null,
+            exportAnswer: data.export_answer || null,
+            exportQuestion: data.export_question || null,
+            exportOnly: !!data.export_answer,
+          }
         : { role: "assistant", content: `Error: ${data.detail || "Request failed"}`, citations: [], query: trimmed };
 
       setChats((prev) =>
@@ -265,6 +361,7 @@ export default function App() {
 
   return (
     <div className="shell">
+      <style>{HOVER_CSS}</style>
       <aside className="sidebar">
         <div className="sb-top">
           <div className="brand-row">
@@ -431,7 +528,8 @@ export default function App() {
             <div className="chat-scroll">
               {messages.map((m, idx) => {
                 const isUnavailable = m.content?.toLowerCase().includes("information not available");
-                const showPdfBtn = m.role === "assistant" && !isUnavailable && wantsPdf(m.query);
+                const showExportBtn = m.role === "assistant" && !isUnavailable && !!m.exportFormat;
+                const isEditing = editingIdx === idx;
                 return (
                   <div key={idx} className={`msg-row ${m.role}`}>
                     <div className="msg-card">
@@ -448,30 +546,74 @@ export default function App() {
                           ))}
                         </div>
                       )}
-                      <div className="msg-body">{m.content}</div>
-                      {m.role === "assistant" && (showPdfBtn || m.citations?.length > 0) && (
-                        <div className="msg-actions">
-                          {showPdfBtn && (
-                            <button className="action-btn" onClick={() => downloadExtractPdf(m.query, m)}>
-                              <IconDown /> Download Extract as PDF
+
+                      {isEditing ? (
+                        <>
+                          <textarea
+                            className="edit-box"
+                            autoFocus
+                            value={editText}
+                            onChange={(e) => setEditText(e.target.value)}
+                            onFocus={(e) => {
+                              const len = e.target.value.length;
+                              e.target.setSelectionRange(len, len);
+                            }}
+                            onKeyDown={(e) => {
+                              if (e.key === "Escape") {
+                                e.preventDefault();
+                                cancelEdit();
+                              } else if (e.key === "Enter" && !e.shiftKey) {
+                                e.preventDefault();
+                                submitEdit();
+                              }
+                            }}
+                          />
+                          <div className="msg-actions" style={{ marginTop: 8 }}>
+                            <button className="action-btn" onClick={submitEdit} disabled={!editText.trim() || asking}>
+                              Save and resend
                             </button>
-                          )}
-                          {m.citations?.length > 0 && (
-                            <button
-                              className="action-btn"
-                              onClick={() => {
-                                setActiveCitations(m.citations);
-                                setInspectorTab("sources");
-                                setInspectorOpen(true);
-                              }}
-                            >
-                              Sources ({m.citations.length})
+                            <button className="action-btn" onClick={cancelEdit}>
+                              Cancel
                             </button>
-                          )}
-                        </div>
+                          </div>
+                          <div className="edit-hint">Enter to resend, Shift+Enter for a new line, Esc to cancel</div>
+                        </>
+                      ) : (
+                        <>
+                          <div className="msg-body" style={{ whiteSpace: "pre-wrap" }}>{m.content}</div>
+                          <div className="msg-actions">
+                            {showExportBtn && (
+                              <button className="action-btn" onClick={() => downloadExtract(m)}>
+                                <IconDown /> Download as {m.exportFormat.toUpperCase()}
+                              </button>
+                            )}
+                            {m.role === "assistant" && m.citations?.length > 0 && (
+                              <button
+                                className="action-btn"
+                                onClick={() => {
+                                  setActiveCitations(m.citations);
+                                  setInspectorTab("sources");
+                                  setInspectorOpen(true);
+                                }}
+                              >
+                                Sources ({m.citations.length})
+                              </button>
+                            )}
+                            <span className="hover-actions">
+                              <button className="action-btn" onClick={() => copyText(m.exportAnswer || m.content, `m${idx}`)}>
+                                {copiedKey === `m${idx}` ? "Copied" : "Copy"}
+                              </button>
+                              {m.role === "user" && (
+                                <button className="action-btn" onClick={() => startEdit(idx)} disabled={asking}>
+                                  Edit
+                                </button>
+                              )}
+                            </span>
+                          </div>
+                        </>
                       )}
 
-                      {m.citations && m.citations.length > 0 && (
+                      {m.citations && m.citations.length > 0 && !isEditing && (
                         <div className="cite-strip">
                           {m.citations.map((c, cIdx) => (
                             <button
@@ -490,7 +632,13 @@ export default function App() {
               })}
               {asking && (
                 <div className="msg-row assistant">
-                  <div className="msg-card muted">Searching vector index and generating grounded answer...</div>
+                  <div className="msg-card muted" style={{ width: "fit-content" }}>
+                    <div className="typing-dots" role="status" aria-label="Thinking">
+                      <span />
+                      <span />
+                      <span />
+                    </div>
+                  </div>
                 </div>
               )}
             </div>
@@ -515,12 +663,31 @@ export default function App() {
                     hidden
                   />
                 </label>
-                <input
-                  type="text"
+                <textarea
+                  ref={followUpRef}
+                  rows={1}
                   placeholder="Ask a follow-up question..."
                   value={question}
                   onChange={(e) => setQuestion(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter" && !e.shiftKey) {
+                      e.preventDefault();
+                      sendQuestion();
+                    }
+                  }}
                   disabled={asking}
+                  style={{
+                    flex: 1,
+                    resize: "none",
+                    background: "transparent",
+                    color: "inherit",
+                    border: "none",
+                    outline: "none",
+                    font: "inherit",
+                    lineHeight: 1.4,
+                    maxHeight: 140,
+                    padding: "8px 4px",
+                  }}
                 />
                 <button className="send-circle" type="submit" disabled={asking || !question.trim()}>
                   <IconUp />

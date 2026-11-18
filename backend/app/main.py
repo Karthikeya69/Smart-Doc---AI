@@ -1,12 +1,15 @@
+import re
 from io import BytesIO
 from xml.sax.saxutils import escape
-from fastapi import FastAPI, File, Form, HTTPException, UploadFile
+
+from fastapi import FastAPI, File, Form, HTTPException, Response, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
+from reportlab.lib import colors
 from reportlab.lib.pagesizes import letter
 from reportlab.lib.styles import getSampleStyleSheet
-from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer
+from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
 
 from app.services.s3_service import upload_file_to_s3, get_pdf_presigned_url
 from app.services.textract_service import (
@@ -15,6 +18,7 @@ from app.services.textract_service import (
     chunk_pages,
 )
 from app.services.bedrock_service import generate_rag_answer
+from app.services.exporters import build, detect_format
 from app.services.vector_service import (
     delete_document,
     get_documents,
@@ -24,7 +28,7 @@ from app.services.vector_service import (
     upsert_document_meta,
 )
 
-app = FastAPI(title="SmartDoc AI API", version="1.2.0")
+app = FastAPI(title="SmartDoc AI API", version="1.3.0")
 
 app.add_middleware(
     CORSMiddleware,
@@ -34,6 +38,7 @@ app.add_middleware(
 )
 
 ALLOWED_EXTS = (".pdf", ".png", ".jpg", ".jpeg")
+UNAVAILABLE_MARK = "information not available in the uploaded documents"
 
 
 @app.on_event("startup")
@@ -49,6 +54,13 @@ class ChatRequest(BaseModel):
 
 class ExportPdfRequest(BaseModel):
     question: str = "Extracted Document Summary"
+    answer: str
+    citations: list[dict] = []
+
+
+class ExportRequest(BaseModel):
+    format: str
+    question: str = ""
     answer: str
     citations: list[dict] = []
 
@@ -118,53 +130,114 @@ def remove_document(doc_name: str):
     return {"deleted": doc_name}
 
 
+def _build_citations(retrieved: list[dict]) -> list[dict]:
+    citations = []
+    for c in retrieved:
+        base_url = get_pdf_presigned_url(c["doc_name"])
+        citations.append({
+            "doc_name": c["doc_name"],
+            "page_number": c["page_number"],
+            "snippet": c["text"],
+            "score": c["score"],
+            "view_url": f"{base_url}#page={c['page_number']}",
+        })
+    return citations
+
+
+def _last_answer(history: list[dict]):
+    """Most recent real assistant answer and the user question that produced it."""
+    for i in range(len(history) - 1, -1, -1):
+        turn = history[i]
+        content = (turn.get("content") or "").strip()
+        if turn.get("role") == "assistant" and content and UNAVAILABLE_MARK not in content.lower():
+            prev_q = ""
+            for j in range(i - 1, -1, -1):
+                if history[j].get("role") == "user":
+                    prev_q = history[j].get("content", "")
+                    break
+            return prev_q, content
+    return None, None
+
+
 @app.post("/api/chat")
 def chat(req: ChatRequest):
     if not req.question.strip():
         raise HTTPException(status_code=400, detail="Question cannot be empty.")
 
-    retrieved = search_chunks(req.question, chat_id=req.chat_id, top_k=4)
+    fmt, clean_q, export_only = detect_format(req.question)
+
+    # "make it doc" / "give me that in xml": convert the previous answer, no search, no AI call
+    if fmt and export_only:
+        prev_q, prev_answer = _last_answer(req.history)
+        if not prev_answer:
+            return {
+                "answer": "There is no earlier answer to convert yet. Ask a question first, then ask for it as a file.",
+                "citations": [],
+                "export_format": None,
+            }
+        base_q = detect_format(prev_q)[1] if prev_q else ""
+        retrieved = search_chunks(base_q, chat_id=req.chat_id, top_k=4) if base_q else []
+        return {
+            "answer": f"Done. Your previous answer is ready to download as {fmt.upper()}.",
+            "citations": _build_citations(retrieved),
+            "export_format": fmt,
+            "export_answer": prev_answer,
+            "export_question": prev_q,
+        }
+
+    retrieved = search_chunks(clean_q, chat_id=req.chat_id, top_k=4)
     available_docs = [d["name"] for d in get_documents(req.chat_id) if d.get("status") == "ready"]
-    answer = generate_rag_answer(req.question, retrieved, req.history, available_docs)
+    answer = generate_rag_answer(clean_q, retrieved, req.history, available_docs)
 
-    unavailable = "information not available in the uploaded documents" in answer.lower()
-    citations = []
-    if not unavailable:
-        for c in retrieved:
-            base_url = get_pdf_presigned_url(c["doc_name"])
-            citations.append({
-                "doc_name": c["doc_name"],
-                "page_number": c["page_number"],
-                "snippet": c["text"],
-                "score": c["score"],
-                "view_url": f"{base_url}#page={c['page_number']}",
-            })
+    unavailable = UNAVAILABLE_MARK in answer.lower()
+    citations = [] if unavailable else _build_citations(retrieved)
 
-    return {"answer": answer, "citations": citations}
+    return {
+        "answer": answer,
+        "citations": citations,
+        "export_format": None if unavailable else fmt,
+    }
 
 
-import re as _re
-from reportlab.lib import colors
-from reportlab.platypus import Table, TableStyle
-
-
-def _smart_pdf_filename(question: str, answer: str) -> str:
+def _smart_filename(question: str, answer: str, ext: str = "pdf") -> str:
     source = question.strip() if question and len(question.strip()) > 3 else answer[:50]
-    cleaned = _re.sub(r"\b(extract|download|create|make|give|me|as|a|the|pdf|info|information|content|about|what|is|are|can|you|tell)\b", " ", source.lower())
-    slug = _re.sub(r"[^a-z0-9]+", "-", cleaned).strip("-")
+    cleaned = re.sub(
+        r"\b(extract|download|create|make|give|me|as|a|the|pdf|doc|docx|xml|json|csv|txt|info|information|content|about|what|is|are|can|you|tell|in|it|i|want|to)\b",
+        " ",
+        source.lower(),
+    )
+    slug = re.sub(r"[^a-z0-9]+", "-", cleaned).strip("-")
     if not slug:
         slug = "smartdoc-extract"
-    return f"{slug[:42]}.pdf"
+    return f"{slug[:42]}.{ext}"
+
+
+@app.post("/api/export")
+def export_file(req: ExportRequest):
+    try:
+        data, mime, ext = build(req.format, req.question, req.answer, req.citations)
+    except KeyError:
+        raise HTTPException(status_code=400, detail="Unsupported format")
+    filename = _smart_filename(req.question, req.answer, ext)
+    return Response(
+        content=data,
+        media_type=mime,
+        headers={
+            "Content-Disposition": f'attachment; filename="{filename}"',
+            "X-Suggested-Filename": filename,
+            "Access-Control-Expose-Headers": "Content-Disposition, X-Suggested-Filename",
+        },
+    )
 
 
 @app.post("/api/export/pdf")
 def export_pdf(req: ExportPdfRequest):
-    filename = _smart_pdf_filename(req.question, req.answer)
+    filename = _smart_filename(req.question, req.answer, "pdf")
     buf = BytesIO()
     doc = SimpleDocTemplate(buf, pagesize=letter, title=filename)
     styles = getSampleStyleSheet()
     story = [
-        Paragraph("SmartDoc AI â€” Mapped Document Extract", styles["Title"]),
+        Paragraph("SmartDoc AI - Mapped Document Extract", styles["Title"]),
         Spacer(1, 10),
         Paragraph(f"<b>Topic / Query:</b> {escape(req.question)}", styles["Normal"]),
         Spacer(1, 12),
