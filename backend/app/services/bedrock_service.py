@@ -1,3 +1,4 @@
+from app.text_utils import keywords
 import hashlib
 import json
 import os
@@ -77,29 +78,27 @@ def _call_gemini(prompt: str, system_prompt: str, api_key: str) -> str:
         data = json.loads(r.read().decode("utf-8"))
     return data["candidates"][0]["content"]["parts"][0]["text"].strip()
 
+NOT_FOUND = "Information not available in the uploaded documents."
+
+
 def _extractive_fallback(question: str, chunks: list[dict]) -> str:
-    q_words = {w for w in re.findall(r"[a-z0-9]+", question.lower()) if len(w) > 2}
+    q = keywords(question)
+    if not q:
+        return NOT_FOUND
     scored = []
     for c in chunks:
-        for s in re.split(r"(?<=[.!?])\s+|\n+", c["text"]):
-            s_clean = s.strip()
-            if len(s_clean) < 15:
+        for s in re.split(r"(?<=[.!?])\s+", c["text"]):
+            s = s.strip()
+            if len(s) < 25 or s.endswith("?"):
                 continue
-            overlap = len(q_words & set(re.findall(r"[a-z0-9]+", s_clean.lower())))
-            if overlap > 0:
-                scored.append((overlap, s_clean, c["doc_name"], c["page_number"]))
-
+            hits = len(q & keywords(s))
+            if hits:
+                scored.append((hits, s, c["doc_name"], c["page_number"]))
     if not scored:
-        return "Information not available in the uploaded documents."
-
-    scored.sort(key=lambda x: x[0], reverse=True)
-    bullets = []
-    seen = set()
-    for _, sent, doc, page in scored[:5]:
-        if sent not in seen:
-            seen.add(sent)
-            bullets.append(f"- {sent} ({doc}, Page {page})")
-    return "Key Details Found:\n" + "\n".join(bullets)
+        return NOT_FOUND
+    scored.sort(key=lambda x: -x[0])
+    body = "\n\n".join(f"- {s} ({d}, Page {p})" for _, s, d, p in scored[:3])
+    return "Note: the AI model is unavailable, so these are the closest passages.\n\n" + body
 
 
 def generate_rag_answer(question: str, chunks: list[dict], history: list[dict] | None = None, available_docs: list[str] | None = None) -> str:
