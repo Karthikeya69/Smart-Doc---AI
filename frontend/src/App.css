@@ -223,3 +223,7 @@ body { background: #090a0d; color: #f4f4f5; }
   font-size: 11px; padding: 2px 8px; border-radius: 6px;
   background: #e4e4e7; color: #090a0d; font-weight: 600;
 }
+
+.del-btn, .send-circle, .action-btn { display: inline-flex; align-items: center; justify-content: center; gap: 5px; }
+.del-btn { border-radius: 50%; width: 20px; height: 20px; }
+.del-btn:hover { background: #27272a; }

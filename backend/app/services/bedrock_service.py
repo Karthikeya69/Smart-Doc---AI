@@ -45,16 +45,23 @@ def get_embedding(text: str) -> list[float]:
 
 
 def _call_gemini(prompt: str, system_prompt: str, api_key: str) -> str:
-    url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key={api_key}"
-    payload = json.dumps({
-        "system_instruction": {"parts": [{"text": system_prompt}]},
-        "contents": [{"role": "user", "parts": [{"text": prompt}]}],
-        "generationConfig": {"temperature": 0.2, "maxOutputTokens": 700},
-    }).encode("utf-8")
-    req = urllib.request.Request(url, data=payload, headers={"Content-Type": "application/json"}, method="POST")
-    with urllib.request.urlopen(req, timeout=25) as r:
-        data = json.loads(r.read().decode("utf-8"))
-    return data["candidates"][0]["content"]["parts"][0]["text"].strip()
+    last_err = None
+    for model in ("gemini-2.5-flash", "gemini-2.0-flash"):
+        try:
+            url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={api_key}"
+            payload = json.dumps({
+                "system_instruction": {"parts": [{"text": system_prompt}]},
+                "contents": [{"role": "user", "parts": [{"text": prompt}]}],
+                "generationConfig": {"temperature": 0.2, "maxOutputTokens": 700},
+            }).encode("utf-8")
+            req = urllib.request.Request(url, data=payload, headers={"Content-Type": "application/json"}, method="POST")
+            with urllib.request.urlopen(req, timeout=25) as r:
+                data = json.loads(r.read().decode("utf-8"))
+            return data["candidates"][0]["content"]["parts"][0]["text"].strip()
+        except Exception as e:
+            last_err = e
+            print(f"[Gemini {model} Error] {e}", flush=True)
+    raise RuntimeError(f"Gemini failed: {last_err}")
 
 
 def _extractive_fallback(question: str, chunks: list[dict]) -> str:
@@ -78,7 +85,7 @@ def _extractive_fallback(question: str, chunks: list[dict]) -> str:
     for _, sent, doc, page in scored[:5]:
         if sent not in seen:
             seen.add(sent)
-            bullets.append(f"â€¢ {sent} ({doc}, Page {page})")
+            bullets.append(f"- {sent} ({doc}, Page {page})")
     return "Key Details Found:\n" + "\n".join(bullets)
 
 
@@ -91,10 +98,11 @@ def generate_rag_answer(question: str, chunks: list[dict], history: list[dict] |
         for i, c in enumerate(chunks, start=1)
     )
 
+    doc_list = ", ".join(available_docs) if available_docs else "none"
     system_prompt = (
-        "You are SmartDoc AI, an intelligent document agent like Claude. Available documents: " + (", ".join(available_docs) if available_docs else "none") + ". If the user asks a broad question across multiple unrelated PDFs, briefly clarify which document they want or organize by document name. Write concise, cleanly structured answers: "
-        "start with a 1-sentence direct summary, then list neatly mapped bullet points (Key: Value). "
-        "Do NOT write long essays or walls of text. "
+        f"You are SmartDoc AI, an intelligent document agent like Claude. Available documents: {doc_list}. "
+        "If the user asks a broad question across multiple unrelated PDFs, briefly clarify which document they want or organize by document name. "
+        "Write concise, cleanly structured answers: start with a 1-sentence summary, then list neatly mapped bullet points (Key: Value). "
         "Use ONLY the provided Source Passages and cite (doc_name, Page N) inline. "
         "If the answer is not in the Source Passages, reply ONLY with: "
         "\"Information not available in the uploaded documents.\""
@@ -124,8 +132,8 @@ def generate_rag_answer(question: str, chunks: list[dict], history: list[dict] |
     gemini_key = os.getenv("GEMINI_API_KEY") or get_settings().get("GEMINI_API_KEY", "")
     if gemini_key:
         try:
-            return _call_gemini(user_prompt, system_prompt, gemini_key)
-        except Exception:
-            pass
+            return _call_gemini(user_prompt, system_prompt, gemini_key.strip())
+        except Exception as e:
+            print(f"[Gemini Fallback Triggered] {e}", flush=True)
 
     return _extractive_fallback(question, chunks)

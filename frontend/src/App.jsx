@@ -7,7 +7,25 @@ const QUICK_PROMPTS = [
   "Extract all invoice details from the attached photo",
 ];
 
-const wantsPdf = (text = "") => /\b(pdf|export|download|extract)\b/i.test(text);
+const wantsPdf = (text = "") => /\b(pdf|export|download|extract|make it pdf)\b/i.test(text);
+
+const IconClose = () => (
+  <svg width="11" height="11" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round">
+    <path d="M2.5 2.5L9.5 9.5M9.5 2.5L2.5 9.5" />
+  </svg>
+);
+
+const IconUp = () => (
+  <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+    <path d="M8 13V3M3.5 7.5L8 3l4.5 4.5" />
+  </svg>
+);
+
+const IconDown = () => (
+  <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+    <path d="M8 3v10M3.5 8.5L8 13l4.5-4.5" />
+  </svg>
+);
 
 export default function App() {
   const [documents, setDocuments] = useState([]);
@@ -237,8 +255,8 @@ export default function App() {
           >
             <span className="attach-icon">{doc.type === "image" ? "IMG" : "PDF"}</span>
             <span className="attach-name">{doc.name}</span>
-            <button className="attach-x" onClick={(e) => deleteDoc(e, doc.name)} title="Remove attachment">
-              &times;
+            <button type="button" className="attach-x" onClick={(e) => deleteDoc(e, doc.name)} title="Remove">
+              <IconClose />
             </button>
           </div>
         ))}
@@ -306,7 +324,9 @@ export default function App() {
                 <span className={`dot ${doc.status === "ready" ? "green" : doc.status === "processing" ? "amber" : "red"}`} />
                 <span className="nav-text">{doc.name}</span>
                 <span className="nav-count">{doc.pages || 0}p</span>
-                <button className="del-btn" onClick={(e) => deleteDoc(e, doc.name)} title="Delete">&times;</button>
+                <button type="button" className="del-btn" onClick={(e) => deleteDoc(e, doc.name)} title="Delete">
+                  <IconClose />
+                </button>
               </li>
             ))}
           </ul>
@@ -322,7 +342,9 @@ export default function App() {
                 onClick={() => setActiveChatId(c.id)}
               >
                 <span className="nav-text">{c.title}</span>
-                <button className="del-btn" onClick={(e) => deleteChat(e, c.id)} title="Delete chat">&times;</button>
+                <button type="button" className="del-btn" onClick={(e) => deleteChat(e, c.id)} title="Delete chat">
+                  <IconClose />
+                </button>
               </li>
             ))}
           </ul>
@@ -332,7 +354,7 @@ export default function App() {
           <div className="avatar">SD</div>
           <div>
             <div className="user-name">SmartDoc Workspace</div>
-            <div className="user-sub">EKS &middot; S3 &middot; Textract</div>
+            <div className="user-sub">EKS / S3 / Textract</div>
           </div>
         </div>
       </aside>
@@ -391,7 +413,7 @@ export default function App() {
                   <span className="pill-muted">{documents.filter((d) => d.status === "ready").length} ready</span>
                 </div>
                 <button className="send-circle" type="submit" disabled={asking || !question.trim()}>
-                  &#8593;
+                  <IconUp />
                 </button>
               </div>
             </form>
@@ -431,7 +453,7 @@ export default function App() {
                         <div className="msg-actions">
                           {showPdfBtn && (
                             <button className="action-btn" onClick={() => downloadExtractPdf(m.query, m)}>
-                              &#8595; Download Extract as PDF
+                              <IconDown /> Download Extract as PDF
                             </button>
                           )}
                           {m.citations?.length > 0 && (
@@ -457,7 +479,7 @@ export default function App() {
                               className="cite-pill"
                               onClick={() => openPdfAtPage(c.doc_name, c.view_url, c.page_number)}
                             >
-                              {c.doc_name} &middot; p.{c.page_number}
+                              {c.doc_name} (p.{c.page_number})
                             </button>
                           ))}
                         </div>
@@ -501,7 +523,7 @@ export default function App() {
                   disabled={asking}
                 />
                 <button className="send-circle" type="submit" disabled={asking || !question.trim()}>
-                  &#8593;
+                  <IconUp />
                 </button>
               </form>
             </div>
@@ -526,7 +548,7 @@ export default function App() {
                 <>
                   <div className="pdf-bar">
                     <span>{activePdf.name} (Page {activePdf.page})</span>
-                    <a href={activePdf.url} target="_blank" rel="noreferrer">Open &#8599;</a>
+                    <a href={activePdf.url} target="_blank" rel="noreferrer">Open</a>
                   </div>
                   <iframe key={activePdf.url} src={activePdf.url} title="Document Preview" className="pdf-frame" />
                 </>
@@ -542,9 +564,9 @@ export default function App() {
                 activeCitations.map((c, i) => (
                   <div key={i} className="source-card">
                     <div className="source-head">
-                      <strong>{c.doc_name} &middot; Page {c.page_number}</strong>
+                      <strong>{c.doc_name} (Page {c.page_number})</strong>
                       <button onClick={() => openPdfAtPage(c.doc_name, c.view_url, c.page_number)}>
-                        Jump to p.{c.page_number} &#8599;
+                        Jump to p.{c.page_number}
                       </button>
                     </div>
                     <p>"{c.snippet}"</p>
