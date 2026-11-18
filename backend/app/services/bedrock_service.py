@@ -99,6 +99,9 @@ def _gemini_model_order(api_key: str) -> list[str]:
     return _GEMINI["order"]
 
 
+_TRANSIENT_CODES = {429, 500, 502, 503, 504}
+
+
 def _call_gemini(prompt: str, system_prompt: str, api_key: str) -> str:
     payload = {
         "system_instruction": {"parts": [{"text": system_prompt}]},
@@ -108,25 +111,42 @@ def _call_gemini(prompt: str, system_prompt: str, api_key: str) -> str:
     order = _gemini_model_order(api_key)
     if _GEMINI["good"] in order:
         order = [_GEMINI["good"]] + [n for n in order if n != _GEMINI["good"]]
+
+    deadline = time.time() + 45
     last_err = None
-    for model in order[:5]:
-        try:
-            data = _gemini_http(f"{GEMINI_BASE}/{model}:generateContent", api_key, payload)
-            cand = (data.get("candidates") or [{}])[0]
-            text = "".join(p.get("text", "") for p in cand.get("content", {}).get("parts", [])).strip()
-            if not text:
-                print(f"[Gemini empty answer] {model} finishReason={cand.get('finishReason')}", flush=True)
-                continue
-            _GEMINI["good"] = model
-            print(f"[Gemini OK] {model}", flush=True)
-            return text
-        except urllib.error.HTTPError as e:
-            body = e.read().decode("utf-8", "ignore")[:300]
-            print(f"[Gemini HTTP {e.code}] {model}: {body}", flush=True)
-            last_err = e
-            if e.code == 404:
-                continue  # this model name is not available; try the next one
-            raise
+    for model in order[:4]:
+        for attempt in range(2):
+            if time.time() > deadline:
+                break
+            try:
+                data = _gemini_http(f"{GEMINI_BASE}/{model}:generateContent", api_key, payload)
+                cand = (data.get("candidates") or [{}])[0]
+                text = "".join(p.get("text", "") for p in cand.get("content", {}).get("parts", [])).strip()
+                if not text:
+                    print(f"[Gemini empty answer] {model} finishReason={cand.get('finishReason')}", flush=True)
+                    break  # try the next model
+                _GEMINI["good"] = model
+                print(f"[Gemini OK] {model} (attempt {attempt + 1})", flush=True)
+                return text
+            except urllib.error.HTTPError as e:
+                body = e.read().decode("utf-8", "ignore")[:300]
+                print(f"[Gemini HTTP {e.code}] {model} attempt {attempt + 1}: {body}", flush=True)
+                last_err = e
+                if e.code in _TRANSIENT_CODES:
+                    if attempt == 0:
+                        time.sleep(1.5)
+                        continue  # one retry on the same model
+                    break  # then try the next model
+                if e.code == 404:
+                    break  # model name not available
+                raise  # real error (bad key, bad request): stop and show it
+            except (urllib.error.URLError, TimeoutError, OSError) as e:
+                print(f"[Gemini network error] {model} attempt {attempt + 1}: {str(e)[:150]}", flush=True)
+                last_err = e
+                if attempt == 0:
+                    time.sleep(1.5)
+                    continue
+                break
     raise last_err or RuntimeError("No Gemini model returned an answer")
 
 
