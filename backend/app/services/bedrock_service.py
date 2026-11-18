@@ -155,20 +155,27 @@ def generate_rag_answer(question: str, chunks: list[dict], history: list[dict] |
         return NOT_FOUND
 
     context_text = "\n\n".join(
-        f"[Source {i} | Document: {c['doc_name']} | Page: {c['page_number']}]\n{c['text']}"
+        f"[Passage {i} | {c['doc_name']} | Page {c['page_number']}]\n{c['text']}"
         for i, c in enumerate(chunks, start=1)
     )
 
     doc_list = ", ".join(available_docs) if available_docs else "none"
     system_prompt = (
-        f"You are SmartDoc AI, an enterprise document assistant. Available documents: {doc_list}. "
-        "If the user asks a broad question across multiple unrelated PDFs, briefly clarify which document they want or organize by document name. "
-        "Write concise, cleanly structured answers: start with a 1-sentence summary, then list neatly mapped bullet points (Key: Value). "
-        "Use ONLY the provided Source Passages and cite (doc_name, Page N) inline. "
-        "If the answer is not in the Source Passages, reply ONLY with: "
-        "\"Information not available in the uploaded documents.\""
+        f"You are SmartDoc AI, a document assistant. Available documents: {doc_list}.\n"
+        "Answer like a thoughtful colleague who has read the document: natural, short paragraphs.\n"
+        "1. Start with the direct answer (yes, no, or the fact) in the first sentence.\n"
+        "2. Reason before answering. Check the numbers (add up durations, compare dates and totals) "
+        "and say so briefly. If the person's premise is slightly off, e.g. they say 4 hours but the "
+        "document says 4 hours 30 minutes, gently correct it and explain.\n"
+        "3. Add only the supporting detail that matters. Use bullets only for a list of 3 or more "
+        "parallel items. No headings, and do not repeat the question.\n"
+        "4. Use ONLY the passages provided. Cite as (Document, Page N) once per group of related "
+        "claims, not after every line. Never mention passage numbers.\n"
+        "5. Use the conversation so far to resolve words like 'he', 'it' or 'that'.\n"
+        "6. If the passages cover only part of the question, answer that part and say what is missing. "
+        f"If nothing relevant is there, reply ONLY with: \"{NOT_FOUND}\""
     )
-    user_prompt = f"Source Passages:\n{context_text}\n\nQuestion: {question}"
+    user_prompt = f"Source passages:\n{context_text}\n\nQuestion: {question}"
 
     if _bedrock_available():
         try:
@@ -185,7 +192,7 @@ def generate_rag_answer(question: str, chunks: list[dict], history: list[dict] |
                 modelId=cfg["CHAT_MODEL"],
                 system=[{"text": system_prompt}],
                 messages=messages,
-                inferenceConfig={"temperature": 0.1, "maxTokens": 600},
+                inferenceConfig={"temperature": 0.2, "maxTokens": 800},
             )
             return resp["output"]["message"]["content"][0]["text"].strip()
         except Exception as e:
@@ -194,7 +201,17 @@ def generate_rag_answer(question: str, chunks: list[dict], history: list[dict] |
     gemini_key = os.getenv("GEMINI_API_KEY") or get_settings().get("GEMINI_API_KEY", "")
     if gemini_key:
         try:
-            return _call_gemini(user_prompt, system_prompt, gemini_key.strip())
+            convo = ""
+            if history:
+                lines = []
+                for turn in history[-4:]:
+                    who = "User" if turn.get("role") == "user" else "Assistant"
+                    content = turn.get("content", "").strip()[:600]
+                    if content:
+                        lines.append(f"{who}: {content}")
+                if lines:
+                    convo = "Conversation so far:\n" + "\n".join(lines) + "\n\n"
+            return _call_gemini(convo + user_prompt, system_prompt, gemini_key.strip())
         except Exception as e:
             print(f"[Gemini Fallback Triggered] {str(e)[:200]}", flush=True)
 
