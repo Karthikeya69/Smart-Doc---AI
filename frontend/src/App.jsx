@@ -7,12 +7,14 @@ const QUICK_PROMPTS = [
   "Extract all invoice details from the attached photo",
 ];
 
+const wantsPdf = (text = "") => /\b(pdf|export|download|extract)\b/i.test(text);
+
 export default function App() {
   const [documents, setDocuments] = useState([]);
+  const [pendingAttachments, setPendingAttachments] = useState([]);
   const [uploading, setUploading] = useState(false);
   const [uploadProgress, setUploadProgress] = useState(0);
   const [uploadingName, setUploadingName] = useState("");
-  const [uploadScope, setUploadScope] = useState("global");
   const [uploadError, setUploadError] = useState("");
   const [question, setQuestion] = useState("");
   const [asking, setAsking] = useState(false);
@@ -50,11 +52,13 @@ export default function App() {
   };
 
   useEffect(() => {
+    setPendingAttachments([]);
     fetchDocuments(activeChat?.id);
   }, [activeChatId]);
 
   const deleteDoc = async (e, name) => {
     e.stopPropagation();
+    setPendingAttachments((prev) => prev.filter((p) => p.name !== name));
     await fetch(`/api/documents/${encodeURIComponent(name)}`, { method: "DELETE" });
     fetchDocuments(activeChat?.id);
   };
@@ -77,6 +81,7 @@ export default function App() {
     const newId = Date.now();
     setChats((prev) => [{ id: newId, title: "New chat", messages: [] }, ...prev]);
     setActiveChatId(newId);
+    setPendingAttachments([]);
     setActiveCitations([]);
   };
 
@@ -84,7 +89,6 @@ export default function App() {
     const files = Array.from(e.target.files || []);
     if (!files.length) return;
     setUploadError("");
-    setUploadScope(scope);
     setUploading(true);
     setUploadProgress(10);
 
@@ -103,7 +107,11 @@ export default function App() {
       try {
         const res = await fetch("/api/documents/upload", { method: "POST", body: formData });
         const data = await res.json();
-        if (!res.ok) setUploadError(data.detail || `Failed: ${file.name}`);
+        if (!res.ok) {
+          setUploadError(data.detail || `Failed: ${file.name}`);
+        } else if (scope === "chat") {
+          setPendingAttachments((prev) => [...prev.filter((p) => p.name !== data.name), data]);
+        }
       } catch (err) {
         setUploadError(`Upload error: ${err.message}`);
       } finally {
@@ -150,17 +158,16 @@ export default function App() {
     } catch {}
   };
 
-  const chatAttachments = documents.filter((d) => d.chat_id === String(activeChat?.id));
-
   const sendQuestion = async (textOverride) => {
     const trimmed = (textOverride ?? question).trim();
     if (!trimmed || asking) return;
 
     const historyPayload = messages.slice(-6).map((m) => ({ role: m.role, content: m.content }));
+    const sentFiles = [...pendingAttachments];
     const userMsg = {
       role: "user",
       content: trimmed,
-      attachments: chatAttachments.map((d) => ({ name: d.name, type: d.type })),
+      attachments: sentFiles.map((d) => ({ name: d.name, type: d.type, view_url: d.view_url })),
       citations: [],
     };
 
@@ -175,6 +182,7 @@ export default function App() {
           : c
       )
     );
+    setPendingAttachments([]);
     setQuestion("");
     setAsking(true);
 
@@ -218,23 +226,10 @@ export default function App() {
     (d) => (!d.chat_id || d.chat_id === "global") && d.name.toLowerCase().includes(searchDoc.toLowerCase())
   );
 
-  const renderUploadBar = () =>
-    uploading && (
-      <div className="upload-progress-wrap">
-        <div className="upload-progress-meta">
-          <span>Processing {uploadingName}...</span>
-          <span>{uploadProgress}%</span>
-        </div>
-        <div className="upload-progress-track">
-          <div className="upload-progress-fill" style={{ width: `${uploadProgress}%` }} />
-        </div>
-      </div>
-    );
-
-  const renderChatChips = () =>
-    chatAttachments.length > 0 && (
+  const renderPendingChips = () =>
+    pendingAttachments.length > 0 && (
       <div className="attach-chips-row">
-        {chatAttachments.map((doc) => (
+        {pendingAttachments.map((doc) => (
           <div
             key={doc.name}
             className="attach-chip"
@@ -277,7 +272,7 @@ export default function App() {
           <div className="sb-label-row">
             <span className="sb-label">Documents ({filteredDocs.length})</span>
             <label className={`mini-upload ${uploading ? "disabled" : ""}`}>
-              {uploading && uploadScope === "global" ? `${uploadProgress}%` : "+ Add Doc"}
+              {uploading ? `${uploadProgress}%` : "+ Add Doc"}
               <input
                 type="file"
                 accept=".pdf,.png,.jpg,.jpeg,application/pdf,image/png,image/jpeg"
@@ -288,7 +283,17 @@ export default function App() {
               />
             </label>
           </div>
-          {uploadScope === "global" && renderUploadBar()}
+          {uploading && (
+            <div className="upload-progress-wrap">
+              <div className="upload-progress-meta">
+                <span>Processing {uploadingName}...</span>
+                <span>{uploadProgress}%</span>
+              </div>
+              <div className="upload-progress-track">
+                <div className="upload-progress-fill" style={{ width: `${uploadProgress}%` }} />
+              </div>
+            </div>
+          )}
           {uploadError && <div className="error-box">{uploadError}</div>}
           <ul className="nav-list">
             {filteredDocs.map((doc) => (
@@ -357,8 +362,7 @@ export default function App() {
                 sendQuestion();
               }}
             >
-              {uploadScope === "chat" && renderUploadBar()}
-              {renderChatChips()}
+              {renderPendingChips()}
               <textarea
                 rows={2}
                 placeholder="Ask a question about your uploaded documents..."
@@ -403,55 +407,65 @@ export default function App() {
         ) : (
           <>
             <div className="chat-scroll">
-              {messages.map((m, idx) => (
-                <div key={idx} className={`msg-row ${m.role}`}>
-                  <div className="msg-card">
-                    {m.attachments && m.attachments.length > 0 && (
-                      <div className="sent-attach-row">
-                        {m.attachments.map((a, aIdx) => (
-                          <span key={aIdx} className="sent-attach-pill">
-                            {a.type === "image" ? "IMG" : "PDF"}: {a.name}
-                          </span>
-                        ))}
-                      </div>
-                    )}
-                    <div className="msg-body">{m.content}</div>
-                    {m.role === "assistant" && (
-                      <div className="msg-actions">
-                        <button className="action-btn" onClick={() => downloadExtractPdf(m.query, m)}>
-                          &#8595; Download Extract as PDF
-                        </button>
-                        {m.citations?.length > 0 && (
-                          <button
-                            className="action-btn"
-                            onClick={() => {
-                              setActiveCitations(m.citations);
-                              setInspectorTab("sources");
-                              setInspectorOpen(true);
-                            }}
-                          >
-                            Sources ({m.citations.length})
-                          </button>
-                        )}
-                      </div>
-                    )}
+              {messages.map((m, idx) => {
+                const isUnavailable = m.content?.toLowerCase().includes("information not available");
+                const showPdfBtn = m.role === "assistant" && !isUnavailable && wantsPdf(m.query);
+                return (
+                  <div key={idx} className={`msg-row ${m.role}`}>
+                    <div className="msg-card">
+                      {m.attachments && m.attachments.length > 0 && (
+                        <div className="sent-attach-row">
+                          {m.attachments.map((a, aIdx) => (
+                            <span
+                              key={aIdx}
+                              className="sent-attach-pill"
+                              onClick={() => a.view_url && openPdfAtPage(a.name, a.view_url, 1)}
+                            >
+                              {a.type === "image" ? "IMG" : "PDF"}: {a.name}
+                            </span>
+                          ))}
+                        </div>
+                      )}
+                      <div className="msg-body">{m.content}</div>
+                      {m.role === "assistant" && (showPdfBtn || m.citations?.length > 0) && (
+                        <div className="msg-actions">
+                          {showPdfBtn && (
+                            <button className="action-btn" onClick={() => downloadExtractPdf(m.query, m)}>
+                              &#8595; Download Extract as PDF
+                            </button>
+                          )}
+                          {m.citations?.length > 0 && (
+                            <button
+                              className="action-btn"
+                              onClick={() => {
+                                setActiveCitations(m.citations);
+                                setInspectorTab("sources");
+                                setInspectorOpen(true);
+                              }}
+                            >
+                              Sources ({m.citations.length})
+                            </button>
+                          )}
+                        </div>
+                      )}
 
-                    {m.citations && m.citations.length > 0 && (
-                      <div className="cite-strip">
-                        {m.citations.map((c, cIdx) => (
-                          <button
-                            key={cIdx}
-                            className="cite-pill"
-                            onClick={() => openPdfAtPage(c.doc_name, c.view_url, c.page_number)}
-                          >
-                            {c.doc_name} &middot; p.{c.page_number}
-                          </button>
-                        ))}
-                      </div>
-                    )}
+                      {m.citations && m.citations.length > 0 && (
+                        <div className="cite-strip">
+                          {m.citations.map((c, cIdx) => (
+                            <button
+                              key={cIdx}
+                              className="cite-pill"
+                              onClick={() => openPdfAtPage(c.doc_name, c.view_url, c.page_number)}
+                            >
+                              {c.doc_name} &middot; p.{c.page_number}
+                            </button>
+                          ))}
+                        </div>
+                      )}
+                    </div>
                   </div>
-                </div>
-              ))}
+                );
+              })}
               {asking && (
                 <div className="msg-row assistant">
                   <div className="msg-card muted">Searching vector index and generating grounded answer...</div>
@@ -460,8 +474,7 @@ export default function App() {
             </div>
 
             <div className="bottom-dock">
-              {uploadScope === "chat" && renderUploadBar()}
-              {renderChatChips()}
+              {renderPendingChips()}
               <form
                 className="bottom-composer"
                 onSubmit={(e) => {
