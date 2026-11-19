@@ -23,6 +23,12 @@ const HOVER_CSS = `
   0%, 60%, 100% { transform: translateY(0); opacity: 0.35; }
   30% { transform: translateY(-5px); opacity: 1; }
 }
+.scope-prompt { border: 1px solid rgba(128,128,128,0.45); border-radius: 12px; padding: 10px 12px; margin: 0 0 8px; }
+.scope-title { font-weight: 600; font-size: 14px; }
+.scope-sub { font-size: 12px; opacity: 0.7; margin: 4px 0 8px; line-height: 1.4; }
+.scope-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+.scope-badge { background: transparent; color: inherit; border: 1px solid rgba(128,128,128,0.45); border-radius: 999px; padding: 3px 10px; font-size: 12px; cursor: pointer; opacity: 0.85; }
+.scope-badge:hover { opacity: 1; }
 `;
 
 // Convert-only exchanges ("make it doc") are not real Q&A, so they are kept out of the history sent to the backend.
@@ -71,6 +77,7 @@ export default function App() {
   const [copiedKey, setCopiedKey] = useState("");
   const [editingIdx, setEditingIdx] = useState(null);
   const [editText, setEditText] = useState("");
+  const [askScope, setAskScope] = useState(false);
   const followUpRef = useRef(null);
   const [chats, setChats] = useState(() => {
     try {
@@ -88,6 +95,12 @@ export default function App() {
 
   const activeChat = chats.find((c) => c.id === activeChatId) || chats[0];
   const messages = activeChat?.messages || [];
+  // "all" = main documents + this chat's files, "isolated" = this chat's files only
+  const chatScope = activeChat?.scope === "isolated" ? "isolated" : "all";
+  const chatOwnDocs = documents.filter(
+    (d) => d.chat_id && d.chat_id !== "global" && String(d.chat_id) === String(activeChat?.id)
+  );
+  const scopePromptOpen = askScope && pendingAttachments.length > 0;
 
   useEffect(() => {
     try {
@@ -115,6 +128,7 @@ export default function App() {
   useEffect(() => {
     setPendingAttachments([]);
     setEditingIdx(null);
+    setAskScope(false);
     fetchDocuments(activeChat?.id);
   }, [activeChatId]);
 
@@ -146,6 +160,7 @@ export default function App() {
     setPendingAttachments([]);
     setActiveCitations([]);
     setEditingIdx(null);
+    setAskScope(false);
   };
 
   const handleUpload = async (e, scope = "global") => {
@@ -174,6 +189,7 @@ export default function App() {
           setUploadError(data.detail || `Failed: ${file.name}`);
         } else if (scope === "chat") {
           setPendingAttachments((prev) => [...prev.filter((p) => p.name !== data.name), data]);
+          setAskScope(true);
         }
       } catch (err) {
         setUploadError(`Upload error: ${err.message}`);
@@ -261,10 +277,15 @@ export default function App() {
     sendQuestion(text, idx);
   };
 
+  const setChatScope = (value) => {
+    setChats((prev) => prev.map((c) => (c.id === activeChat.id ? { ...c, scope: value } : c)));
+    setAskScope(false);
+  };
+
   // baseIdx: when set, the conversation is cut back to messages[0..baseIdx) before sending (used by Edit).
   const sendQuestion = async (textOverride, baseIdx) => {
     const trimmed = (textOverride ?? question).trim();
-    if (!trimmed || asking) return;
+    if (!trimmed || asking || scopePromptOpen) return;
 
     const priorMessages = baseIdx === undefined ? messages : messages.slice(0, baseIdx);
     const historyPayload = buildHistory(priorMessages);
@@ -299,6 +320,7 @@ export default function App() {
           question: trimmed,
           chat_id: String(activeChat.id),
           history: historyPayload,
+          scope: chatScope,
         }),
       });
       const data = await res.json();
@@ -359,6 +381,37 @@ export default function App() {
       </div>
     );
 
+  const renderScopePrompt = () =>
+    scopePromptOpen && (
+      <div className="scope-prompt">
+        <div className="scope-title">Is this file related to your main documents?</div>
+        <div className="scope-sub">
+          Related: the AI reads your main documents and this file together. Private: the AI reads only this file in
+          this chat and ignores the main documents.
+        </div>
+        <div className="scope-actions">
+          <button type="button" className="action-btn" onClick={() => setChatScope("all")}>
+            Related (main docs + this file)
+          </button>
+          <button type="button" className="action-btn" onClick={() => setChatScope("isolated")}>
+            Private (this file only)
+          </button>
+        </div>
+      </div>
+    );
+
+  const renderScopeBadge = () =>
+    chatOwnDocs.length > 0 && (
+      <button
+        type="button"
+        className="scope-badge"
+        title="Click to switch"
+        onClick={() => setChatScope(chatScope === "isolated" ? "all" : "isolated")}
+      >
+        {chatScope === "isolated" ? "Private: this chat's files only" : "Using main docs + this chat's files"}
+      </button>
+    );
+
   return (
     <div className="shell">
       <style>{HOVER_CSS}</style>
@@ -385,7 +438,7 @@ export default function App() {
 
         <div className="sb-section">
           <div className="sb-label-row">
-            <span className="sb-label">Documents ({filteredDocs.length})</span>
+            <span className="sb-label">Main documents ({filteredDocs.length})</span>
             <label className={`mini-upload ${uploading ? "disabled" : ""}`}>
               {uploading ? `${uploadProgress}%` : "+ Add Doc"}
               <input
@@ -463,6 +516,7 @@ export default function App() {
             <span className="sep">/</span>
             <strong>{activeChat?.title || "New chat"}</strong>
           </div>
+          {renderScopeBadge()}
           <button className="toggle-inspector" onClick={() => setInspectorOpen((v) => !v)}>
             {inspectorOpen ? "Hide Inspector" : "Show PDF & Sources"}
           </button>
@@ -482,6 +536,7 @@ export default function App() {
               }}
             >
               {renderPendingChips()}
+              {renderScopePrompt()}
               <textarea
                 rows={2}
                 placeholder="Ask a question about your uploaded documents..."
@@ -509,7 +564,7 @@ export default function App() {
                   </label>
                   <span className="pill-muted">{documents.filter((d) => d.status === "ready").length} ready</span>
                 </div>
-                <button className="send-circle" type="submit" disabled={asking || !question.trim()}>
+                <button className="send-circle" type="submit" disabled={asking || scopePromptOpen || !question.trim()}>
                   <IconUp />
                 </button>
               </div>
@@ -645,6 +700,7 @@ export default function App() {
 
             <div className="bottom-dock">
               {renderPendingChips()}
+              {renderScopePrompt()}
               <form
                 className="bottom-composer"
                 onSubmit={(e) => {
@@ -689,7 +745,7 @@ export default function App() {
                     padding: "8px 4px",
                   }}
                 />
-                <button className="send-circle" type="submit" disabled={asking || !question.trim()}>
+                <button className="send-circle" type="submit" disabled={asking || scopePromptOpen || !question.trim()}>
                   <IconUp />
                 </button>
               </form>

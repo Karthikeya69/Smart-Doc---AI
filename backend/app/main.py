@@ -1,3 +1,4 @@
+#backend/app/main.py
 import re
 from io import BytesIO
 from xml.sax.saxutils import escape
@@ -50,6 +51,8 @@ class ChatRequest(BaseModel):
     question: str
     chat_id: str = "global"
     history: list[dict] = []
+    # "all": main documents + this chat's own files. "isolated": this chat's own files only.
+    scope: str = "all"
 
 
 class ExportPdfRequest(BaseModel):
@@ -159,12 +162,32 @@ def _last_answer(history: list[dict]):
     return None, None
 
 
+def _chat_own_doc_names(chat_id: str) -> set[str]:
+    """Names of the documents attached to this chat only (not the main documents)."""
+    return {
+        d["name"] for d in get_documents(chat_id)
+        if d.get("status") == "ready" and str(d.get("chat_id", "global")) == str(chat_id)
+    }
+
+
+def _scoped_search(query: str, chat_id: str, scope: str, top_k: int = 4) -> list[dict]:
+    """scope 'isolated': only this chat's own files can be retrieved, main documents are filtered out."""
+    if scope != "isolated":
+        return search_chunks(query, chat_id=chat_id, top_k=top_k)
+    own = _chat_own_doc_names(chat_id)
+    if not own:
+        return []
+    hits = search_chunks(query, chat_id=chat_id, top_k=500)
+    return [h for h in hits if h["doc_name"] in own][:top_k]
+
+
 @app.post("/api/chat")
 def chat(req: ChatRequest):
     if not req.question.strip():
         raise HTTPException(status_code=400, detail="Question cannot be empty.")
 
     fmt, clean_q, export_only = detect_format(req.question)
+    scope = "isolated" if req.scope == "isolated" else "all"
 
     # "make it doc" / "give me that in xml": convert the previous answer, no search, no AI call
     if fmt and export_only:
@@ -176,7 +199,7 @@ def chat(req: ChatRequest):
                 "export_format": None,
             }
         base_q = detect_format(prev_q)[1] if prev_q else ""
-        retrieved = search_chunks(base_q, chat_id=req.chat_id, top_k=4) if base_q else []
+        retrieved = _scoped_search(base_q, req.chat_id, scope) if base_q else []
         return {
             "answer": f"Done. Your previous answer is ready to download as {fmt.upper()}.",
             "citations": _build_citations(retrieved),
@@ -185,8 +208,12 @@ def chat(req: ChatRequest):
             "export_question": prev_q,
         }
 
-    retrieved = search_chunks(clean_q, chat_id=req.chat_id, top_k=4)
-    available_docs = [d["name"] for d in get_documents(req.chat_id) if d.get("status") == "ready"]
+    retrieved = _scoped_search(clean_q, req.chat_id, scope)
+    own_names = _chat_own_doc_names(req.chat_id)
+    available_docs = [
+        d["name"] for d in get_documents(req.chat_id)
+        if d.get("status") == "ready" and (scope != "isolated" or d["name"] in own_names)
+    ]
     answer = generate_rag_answer(clean_q, retrieved, req.history, available_docs)
 
     unavailable = UNAVAILABLE_MARK in answer.lower()
