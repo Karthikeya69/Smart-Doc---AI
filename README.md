@@ -73,7 +73,7 @@ The full explanation of each step is in [RAG_IMPLEMENTATION.md](RAG_IMPLEMENTATI
 **Extras**
 - "Format on request": if the user asks for the answer *in PDF / Word / XML / JSON / CSV / TXT / Markdown*, a download button for that format appears on that message only. Without such a request, no button appears.
 - Delete for documents and chats, Copy and Edit buttons on messages, Shift+Enter for new lines
-- Chat-only attachments (separated in the interface; this is not real access control)
+- Per-chat attachments with a privacy choice: when a file is attached to one chat, the user chooses whether it is related to the main documents (the AI reads both) or private (the AI reads only that file, and the backend filters the main documents out of the search). The choice is enforced in the backend search, but the app has no user accounts, so this is not login-based access control.
 
 ---
 
