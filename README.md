@@ -1,5 +1,8 @@
 # SmartDoc AI - Intelligent PDF Document Assistant
 
+<!-- hero-screenshot -->
+![SmartDoc AI](screenshots/Screenshot%20%28222%29.png)
+
 SmartDoc AI lets users upload PDF documents (and photos of documents) and ask questions in natural language. Answers are generated with Retrieval-Augmented Generation (RAG) and every answer shows its source: the document name, the page number, the supporting passage, and a button to open the original PDF at that page.
 
 - **Project type:** Generative AI + Cloud Engineering (assignment originally written for Azure, implemented on AWS)
