@@ -29,6 +29,8 @@ const HOVER_CSS = `
 .scope-actions { display: flex; gap: 8px; flex-wrap: wrap; }
 .scope-badge { background: transparent; color: inherit; border: 1px solid rgba(128,128,128,0.45); border-radius: 999px; padding: 3px 10px; font-size: 12px; cursor: pointer; opacity: 0.85; }
 .scope-badge:hover { opacity: 1; }
+.source-card mark { background: rgba(250, 204, 21, 0.35); color: inherit; border-radius: 3px; padding: 0 2px; }
+.source-meta { font-size: 12px; opacity: 0.65; margin: 4px 0 6px; }
 `;
 
 // Convert-only exchanges ("make it doc") are not real Q&A, so they are kept out of the history sent to the backend.
@@ -44,6 +46,24 @@ const buildHistory = (msgs) => {
     out.push({ role: m.role, content: m.content });
   }
   return out.slice(-6);
+};
+
+const QUERY_STOP = new Set(("what is are the a an of for to in on and or how many much do does can you tell me give show "
+  + "please about with from this that it its my our your their there which who whom when where why was were be been has have had "
+  + "all any some into out up down over under").split(" "));
+
+// Words from the question worth highlighting inside a source passage.
+const queryTerms = (q) =>
+  [...new Set(((q || "").toLowerCase().match(/[a-z0-9]+/g)) || [])].filter((w) => w.length > 2 && !QUERY_STOP.has(w));
+
+// Returns the passage as React nodes with the matching words wrapped in <mark>.
+const highlightTerms = (text, q) => {
+  const terms = queryTerms(q);
+  if (!text || terms.length === 0) return text;
+  const re = new RegExp("(" + terms.map((t) => t.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("|") + ")", "gi");
+  return String(text)
+    .split(re)
+    .map((part, i) => (i % 2 === 1 ? <mark key={i}>{part}</mark> : part));
 };
 
 const IconClose = () => (
@@ -328,7 +348,7 @@ export default function App() {
         ? {
             role: "assistant",
             content: data.answer,
-            citations: data.citations || [],
+            citations: (data.citations || []).map((c) => ({ ...c, query: trimmed })),
             query: trimmed,
             exportFormat: data.export_format || null,
             exportAnswer: data.export_answer || null,
@@ -792,7 +812,11 @@ export default function App() {
                         Jump to p.{c.page_number}
                       </button>
                     </div>
-                    <p>"{c.snippet}"</p>
+                    <div className="source-meta">
+                      Rank {i + 1}
+                      {typeof c.score === "number" ? ` | match score ${c.score.toFixed(2)}` : ""}
+                    </div>
+                    <p>"{highlightTerms(c.snippet, c.query)}"</p>
                   </div>
                 ))
               )}
