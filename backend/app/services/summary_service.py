@@ -124,10 +124,11 @@ def _complete(system: str, user: str):
             payload = {
                 "systemInstruction": {"parts": [{"text": system}]},
                 "contents": [{"role": "user", "parts": [{"text": user}]}],
-                "generationConfig": {"temperature": 0.2, "maxOutputTokens": 1200},
+                "generationConfig": {"temperature": 0.2, "maxOutputTokens": 1200,
+                                     "thinkingConfig": {"thinkingBudget": 0}},
             }
             try:
-                data = bs._gemini_http(f"{bs.GEMINI_BASE}/models/{model}:generateContent", key, payload, timeout=40)
+                data = bs._gemini_http(f"{bs.GEMINI_BASE}/models/{model}:generateContent", key, payload, timeout=30)
                 parts = data["candidates"][0]["content"]["parts"]
                 text = "".join(p.get("text", "") for p in parts).strip()
                 if text:
