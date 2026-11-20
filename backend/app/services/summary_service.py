@@ -118,9 +118,9 @@ def _complete(system: str, user: str):
         except Exception as e:
             bs._bedrock_mark_down(e)
     key = (os.getenv("GEMINI_API_KEY") or get_settings().get("GEMINI_API_KEY", "") or "").strip()
-    if key:
+    if key and not bs.gemini_cooling():
         # Direct call (same HTTP helper the embeddings use), so it does not depend on the chat helper's signature.
-        for model in ("gemini-flash-latest", "gemini-2.0-flash"):
+        for model in ("gemini-flash-latest",):
             payload = {
                 "systemInstruction": {"parts": [{"text": system}]},
                 "contents": [{"role": "user", "parts": [{"text": user}]}],
@@ -150,6 +150,8 @@ def _complete(system: str, user: str):
                             return text
                     except Exception:
                         pass
+                if getattr(e, "code", None) == 429:
+                    bs.gemini_cool_down(body)
                 print(f"[Summary Gemini {model} failed] {str(e)[:120]} {body}", flush=True)
     return None
 

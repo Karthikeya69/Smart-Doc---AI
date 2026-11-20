@@ -60,7 +60,19 @@ def get_embedding(text: str) -> list[float]:
 
 
 GEMINI_BASE = "https://generativelanguage.googleapis.com/v1beta"
-_GEMINI = {"order": None, "good": None}
+_GEMINI = {"order": None, "good": None, "cool_until": 0.0}
+
+
+def gemini_cooling() -> bool:
+    """True while we are backing off after a quota (429) error."""
+    return time.time() < _GEMINI["cool_until"]
+
+
+def gemini_cool_down(body: str) -> None:
+    # Daily quota: back off long. Per-minute quota: back off briefly. Retrying only burns more quota.
+    seconds = 900 if "perday" in body.lower().replace(" ", "").replace("_", "") else 60
+    _GEMINI["cool_until"] = time.time() + seconds
+    print(f"[Gemini quota exceeded] pausing Gemini calls for {seconds}s", flush=True)
 
 
 def _gemini_http(url: str, api_key: str, payload: dict | None = None, timeout: int = 25) -> dict:
@@ -109,6 +121,8 @@ def _call_gemini(prompt: str, system_prompt: str, api_key: str) -> str:
         "generationConfig": {"temperature": 0.2, "maxOutputTokens": 2000,
                              "thinkingConfig": {"thinkingBudget": 0}},  # no hidden reasoning: much faster
     }
+    if gemini_cooling():
+        raise RuntimeError("Gemini paused after quota error")
     order = _gemini_model_order(api_key)
     if _GEMINI["good"] in order:
         order = [_GEMINI["good"]] + [n for n in order if n != _GEMINI["good"]]
@@ -130,9 +144,12 @@ def _call_gemini(prompt: str, system_prompt: str, api_key: str) -> str:
                 print(f"[Gemini OK] {model} (attempt {attempt + 1})", flush=True)
                 return text
             except urllib.error.HTTPError as e:
-                body = e.read().decode("utf-8", "ignore")[:300]
+                body = e.read().decode("utf-8", "ignore")[:900]
                 print(f"[Gemini HTTP {e.code}] {model} attempt {attempt + 1}: {body}", flush=True)
                 last_err = e
+                if e.code == 429:
+                    gemini_cool_down(body)
+                    raise  # same key and project: other models will fail too, so stop here
                 if e.code == 400 and "thinking" in body.lower() and "thinkingConfig" in payload["generationConfig"]:
                     del payload["generationConfig"]["thinkingConfig"]  # this model rejects it: retry without
                     continue

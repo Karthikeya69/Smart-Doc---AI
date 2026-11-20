@@ -22,6 +22,7 @@ EMBED_DIMS = int(os.getenv("EMBED_DIMS", "768"))
 BATCH_SIZE = 50  # the API accepts up to 100 texts per batch request
 _STATE = {"model": None, "down_until": 0.0, "dims_ok": True}
 _TRANSIENT = {429, 500, 502, 503, 504}
+_QCACHE: dict = {}  # repeated questions reuse their embedding (saves API quota)
 
 
 def local_embedding(text: str) -> list[float]:
@@ -149,6 +150,8 @@ def embed_query(text: str):
     key = _api_key()
     if not key or not _available():
         return None
+    if text in _QCACHE:
+        return _QCACHE[text]
     try:
         model = _pick_model(key)
 
@@ -157,7 +160,10 @@ def embed_query(text: str):
 
         data = _post(f"{model}:embedContent", build, key, timeout=12)
         vec = _normalize(data["embedding"]["values"])
-        return vec, _tag(model, len(vec))
+        if len(_QCACHE) > 200:
+            _QCACHE.clear()
+        _QCACHE[text] = (vec, _tag(model, len(vec)))
+        return _QCACHE[text]
     except Exception as e:
-        _mark_down(e, seconds=30)
+        _mark_down(e, seconds=90 if getattr(e, "code", None) == 429 else 30)
         return None
