@@ -120,12 +120,11 @@ def _complete(system: str, user: str):
     key = (os.getenv("GEMINI_API_KEY") or get_settings().get("GEMINI_API_KEY", "") or "").strip()
     if key and not bs.gemini_cooling():
         # Direct call (same HTTP helper the embeddings use), so it does not depend on the chat helper's signature.
-        for model in ("gemini-flash-latest",):
+        for model in (os.getenv("GEMINI_MODEL", "gemini-3.5-flash-lite").strip(),):
             payload = {
                 "systemInstruction": {"parts": [{"text": system}]},
                 "contents": [{"role": "user", "parts": [{"text": user}]}],
-                "generationConfig": {"temperature": 0.2, "maxOutputTokens": 1200,
-                                     "thinkingConfig": {"thinkingBudget": 0}},
+                "generationConfig": {"temperature": 0.2, "maxOutputTokens": 1200},
             }
             try:
                 data = bs._gemini_http(f"{bs.GEMINI_BASE}/models/{model}:generateContent", key, payload, timeout=30)

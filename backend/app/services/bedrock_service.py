@@ -1,3 +1,4 @@
+import random
 from app.text_utils import keywords
 import hashlib
 import json
@@ -90,10 +91,13 @@ def _gemini_http(url: str, api_key: str, payload: dict | None = None, timeout: i
 def _gemini_model_order(api_key: str) -> list[str]:
     if _GEMINI["order"]:
         return _GEMINI["order"]
-    order = ["models/gemini-flash-latest"]
+    preferred = os.getenv("GEMINI_MODEL", "gemini-3.5-flash-lite").strip()
+    if not preferred.startswith("models/"):
+        preferred = f"models/{preferred}"
+    order = [preferred]
     try:
         models = _gemini_http(f"{GEMINI_BASE}/models", api_key, timeout=15).get("models", [])
-        skip = ("lite", "image", "tts", "live", "audio", "embedding", "exp", "vision", "robotics", "computer")
+        skip = ("image", "tts", "live", "audio", "embedding", "exp", "vision", "robotics", "computer")
         flash = [
             m["name"] for m in models
             if "generateContent" in m.get("supportedGenerationMethods", [])
@@ -118,8 +122,7 @@ def _call_gemini(prompt: str, system_prompt: str, api_key: str) -> str:
     payload = {
         "system_instruction": {"parts": [{"text": system_prompt}]},
         "contents": [{"role": "user", "parts": [{"text": prompt}]}],
-        "generationConfig": {"temperature": 0.2, "maxOutputTokens": 2000,
-                             "thinkingConfig": {"thinkingBudget": 0}},  # no hidden reasoning: much faster
+        "generationConfig": {"temperature": 0.1, "maxOutputTokens": 1200},  # no hidden reasoning: much faster
     }
     if gemini_cooling():
         raise RuntimeError("Gemini paused after quota error")
@@ -134,7 +137,7 @@ def _call_gemini(prompt: str, system_prompt: str, api_key: str) -> str:
             if time.time() > deadline:
                 break
             try:
-                data = _gemini_http(f"{GEMINI_BASE}/{model}:generateContent", api_key, payload)
+                data = _gemini_http(f"{GEMINI_BASE}/{model}:generateContent", api_key, payload, timeout=35)
                 cand = (data.get("candidates") or [{}])[0]
                 text = "".join(p.get("text", "") for p in cand.get("content", {}).get("parts", [])).strip()
                 if not text:
@@ -155,7 +158,7 @@ def _call_gemini(prompt: str, system_prompt: str, api_key: str) -> str:
                     continue
                 if e.code in _TRANSIENT_CODES:
                     if attempt == 0:
-                        time.sleep(1.5)
+                        time.sleep(1.5 + random.uniform(0, 1.0))
                         continue  # one retry on the same model
                     break  # then try the next model
                 if e.code == 404:
@@ -165,7 +168,7 @@ def _call_gemini(prompt: str, system_prompt: str, api_key: str) -> str:
                 print(f"[Gemini network error] {model} attempt {attempt + 1}: {str(e)[:150]}", flush=True)
                 last_err = e
                 if attempt == 0:
-                    time.sleep(1.5)
+                    time.sleep(1.5 + random.uniform(0, 1.0))
                     continue
                 break
     raise last_err or RuntimeError("No Gemini model returned an answer")
@@ -209,8 +212,20 @@ def _extractive_fallback(question: str, chunks: list[dict]) -> str:
     if not scored:
         return NOT_FOUND
     scored.sort(key=lambda x: -x[0])
+    combined = " ".join(c["text"] for c in chunks)
+    inv_fields = []
+    for label, pat in (
+        ("Invoice #", r"(?:Invoice\s*(?:#|No\.?|Number))[:\s]*([A-Z0-9-]+)"),
+        ("Date", r"(?:Invoice\s*Date|Date)[:\s]*([0-9]{1,4}[/-][0-9]{1,2}[/-][0-9]{2,4}|[A-Za-z]+\s+\d{1,2},?\s+\d{4})"),
+        ("Tax / GST", r"(?:Tax|GST|VAT)[:\s]*([$₹€£]?\s?[\d,]+\.\d{2})"),
+        ("Total", r"(?:Grand\s*Total|Amount\s*Due|Total)[:\s]*([$₹€£]?\s?[\d,]+\.\d{2})"),
+    ):
+        m = re.search(pat, combined, re.IGNORECASE)
+        if m:
+            inv_fields.append(f"- {label}: {m.group(1).strip()}")
+    header = ("\n".join(inv_fields) + "\n\n") if inv_fields else ""
     body = "\n\n".join(f"- {s} ({d}, Page {p})" for _, s, d, p in scored[:3])
-    return "Note: the AI model is unavailable, so these are the closest passages.\n\n" + body
+    return "Note: the AI model is temporarily unavailable; here is an extractive summary.\n\n" + header + body
 
 
 def generate_rag_answer(question: str, chunks: list[dict], history: list[dict] | None = None, available_docs: list[str] | None = None) -> str:
@@ -232,6 +247,7 @@ def generate_rag_answer(question: str, chunks: list[dict], history: list[dict] |
         "document says 4 hours 30 minutes, gently correct it and explain.\n"
         "3. Add only the supporting detail that matters. Use bullets only for a list of 3 or more "
         "parallel items. No headings, and do not repeat the question.\n"
+        "3b. Write in plain, natural conversational text—NEVER use Markdown asterisks (** or *), and do NOT list fields the user did not ask for (no \"Not specified\" fillers). If a document has multiple items or invoices matching the question (such as multiple grand totals), list each item clearly by product or charge name with its amount and page, and give the combined sum if helpful.\n"
         "4. Use ONLY the passages provided. Cite as (Document, Page N) once per group of related "
         "claims, not after every line. Never mention passage numbers.\n"
         "5. Use the conversation so far to resolve words like 'he', 'it' or 'that'.\n"
