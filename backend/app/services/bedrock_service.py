@@ -171,19 +171,41 @@ def _call_gemini(prompt: str, system_prompt: str, api_key: str) -> str:
     raise last_err or RuntimeError("No Gemini model returned an answer")
 
 
+def _best_window(text: str, q: set[str], width: int = 240) -> tuple[int, str]:
+    """The short stretch of text with the most question words (OCR text often has no sentence breaks)."""
+    text = " ".join(text.split())
+    words = [(m.start(), m.group().lower()) for m in re.finditer(r"[A-Za-z0-9]+", text)]
+    hits = [(pos, w) for pos, w in words if w in q]
+    if not hits:
+        return 0, ""
+    best = (0, 0)
+    for pos, _ in hits:
+        start = max(0, pos - 70)
+        seen = {w for p, w in hits if start <= p < start + width}
+        if len(seen) > best[0]:
+            best = (len(seen), start)
+    n, start = best
+    end = min(len(text), start + width)
+    if start > 0:
+        start = text.rfind(" ", 0, start) + 1  # do not cut a word in half
+    if end < len(text):
+        cut = text.rfind(" ", start, end)
+        end = cut if cut > start else end
+    snippet = text[start:end].strip()
+    return n, ("... " if start > 0 else "") + snippet + (" ..." if end < len(text) else "")
+
+
 def _extractive_fallback(question: str, chunks: list[dict]) -> str:
     q = keywords(question)
     if not q:
         return NOT_FOUND
-    scored = []
+    scored, seen = [], set()
     for c in chunks:
-        for s in re.split(r"(?<=[.!?])\s+", c["text"]):
-            s = s.strip()
-            if len(s) < 25 or s.endswith("?"):
-                continue
-            hits = len(q & keywords(s))
-            if hits:
-                scored.append((hits, s, c["doc_name"], c["page_number"]))
+        n, snip = _best_window(c["text"], q)
+        key = (c["doc_name"], c["page_number"])
+        if n and key not in seen:
+            seen.add(key)
+            scored.append((n, snip, c["doc_name"], c["page_number"]))
     if not scored:
         return NOT_FOUND
     scored.sort(key=lambda x: -x[0])
