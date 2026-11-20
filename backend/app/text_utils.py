@@ -2,7 +2,8 @@ import re
 
 STOPWORDS = {"what","is","the","are","a","an","of","to","in","on","for","and","or","do","does",
              "can","you","me","tell","about","this","that","how","many","which","who","when",
-             "where","why","with","from","be","it","its","as","by","at","please"}
+             "where","why","with","from","be","it","its","as","by","at","please",
+             "there","give","show","list"}
 
 
 def keywords(text: str) -> set[str]:

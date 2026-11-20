@@ -20,6 +20,7 @@ from app.services.textract_service import (
 )
 from app.services.bedrock_service import generate_rag_answer
 from app.services.exporters import build, detect_format
+from app.services.summary_service import try_summary
 from app.services.vector_service import (
     delete_document,
     get_documents,
@@ -208,6 +209,15 @@ def chat(req: ChatRequest):
             "export_question": prev_q,
         }
 
+    summary = try_summary(clean_q, req.chat_id, scope)
+    if summary is not None:
+        s_answer, s_used = summary
+        s_unavail = UNAVAILABLE_MARK in s_answer.lower()
+        return {
+            "answer": s_answer,
+            "citations": [] if s_unavail else _build_citations(s_used),
+            "export_format": None if s_unavail else fmt,
+        }
     retrieved = _scoped_search(clean_q, req.chat_id, scope)
     own_names = _chat_own_doc_names(req.chat_id)
     available_docs = [
