@@ -119,10 +119,28 @@ def _complete(system: str, user: str):
             bs._bedrock_mark_down(e)
     key = (os.getenv("GEMINI_API_KEY") or get_settings().get("GEMINI_API_KEY", "") or "").strip()
     if key:
-        try:
-            return bs._call_gemini(user, system, key)
-        except Exception as e:
-            print(f"[Summary: Gemini Fallback Triggered] {str(e)[:200]}", flush=True)
+        # Direct call (same HTTP helper the embeddings use), so it does not depend on the chat helper's signature.
+        for model in ("gemini-flash-latest", "gemini-2.0-flash"):
+            payload = {
+                "systemInstruction": {"parts": [{"text": system}]},
+                "contents": [{"role": "user", "parts": [{"text": user}]}],
+                "generationConfig": {"temperature": 0.2, "maxOutputTokens": 1200},
+            }
+            try:
+                data = bs._gemini_http(f"{bs.GEMINI_BASE}/models/{model}:generateContent", key, payload, timeout=40)
+                parts = data["candidates"][0]["content"]["parts"]
+                text = "".join(p.get("text", "") for p in parts).strip()
+                if text:
+                    print(f"[Summary OK] {model}", flush=True)
+                    return text
+            except Exception as e:
+                body = ""
+                if hasattr(e, "read"):
+                    try:
+                        body = e.read().decode("utf-8", "ignore")[:200]
+                    except Exception:
+                        pass
+                print(f"[Summary Gemini {model} failed] {str(e)[:120]} {body}", flush=True)
     return None
 
 
