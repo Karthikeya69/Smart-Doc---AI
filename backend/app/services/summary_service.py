@@ -141,6 +141,15 @@ def _complete(system: str, user: str):
                         body = e.read().decode("utf-8", "ignore")[:200]
                     except Exception:
                         pass
+                if "thinking" in body.lower():
+                    payload["generationConfig"].pop("thinkingConfig", None)
+                    try:  # this model rejects the setting: retry once without it
+                        data = bs._gemini_http(f"{bs.GEMINI_BASE}/models/{model}:generateContent", key, payload, timeout=30)
+                        text = "".join(x.get("text", "") for x in data["candidates"][0]["content"]["parts"]).strip()
+                        if text:
+                            return text
+                    except Exception:
+                        pass
                 print(f"[Summary Gemini {model} failed] {str(e)[:120]} {body}", flush=True)
     return None
 

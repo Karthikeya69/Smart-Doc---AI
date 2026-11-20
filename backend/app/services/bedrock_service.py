@@ -106,13 +106,14 @@ def _call_gemini(prompt: str, system_prompt: str, api_key: str) -> str:
     payload = {
         "system_instruction": {"parts": [{"text": system_prompt}]},
         "contents": [{"role": "user", "parts": [{"text": prompt}]}],
-        "generationConfig": {"temperature": 0.2, "maxOutputTokens": 2000},
+        "generationConfig": {"temperature": 0.2, "maxOutputTokens": 2000,
+                             "thinkingConfig": {"thinkingBudget": 0}},  # no hidden reasoning: much faster
     }
     order = _gemini_model_order(api_key)
     if _GEMINI["good"] in order:
         order = [_GEMINI["good"]] + [n for n in order if n != _GEMINI["good"]]
 
-    deadline = time.time() + 45
+    deadline = time.time() + 40
     last_err = None
     for model in order[:4]:
         for attempt in range(2):
@@ -132,6 +133,9 @@ def _call_gemini(prompt: str, system_prompt: str, api_key: str) -> str:
                 body = e.read().decode("utf-8", "ignore")[:300]
                 print(f"[Gemini HTTP {e.code}] {model} attempt {attempt + 1}: {body}", flush=True)
                 last_err = e
+                if e.code == 400 and "thinking" in body.lower() and "thinkingConfig" in payload["generationConfig"]:
+                    del payload["generationConfig"]["thinkingConfig"]  # this model rejects it: retry without
+                    continue
                 if e.code in _TRANSIENT_CODES:
                     if attempt == 0:
                         time.sleep(1.5)
