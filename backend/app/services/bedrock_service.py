@@ -94,9 +94,11 @@ def _gemini_model_order(api_key: str) -> list[str]:
     preferred = os.getenv("GEMINI_MODEL", "gemini-3.5-flash-lite").strip()
     if not preferred.startswith("models/"):
         preferred = f"models/{preferred}"
-    order = [preferred]
+    order = [preferred, "models/gemini-3.6-flash", "models/gemini-2.5-flash-lite"]
+    _GEMINI["order"] = list(dict.fromkeys(order))
+    return _GEMINI["order"]
     try:
-        models = _gemini_http(f"{GEMINI_BASE}/models", api_key, timeout=15).get("models", [])
+        models = []
         skip = ("image", "tts", "live", "audio", "embedding", "exp", "vision", "robotics", "computer")
         flash = [
             m["name"] for m in models
@@ -137,7 +139,7 @@ def _call_gemini(prompt: str, system_prompt: str, api_key: str) -> str:
             if time.time() > deadline:
                 break
             try:
-                data = _gemini_http(f"{GEMINI_BASE}/{model}:generateContent", api_key, payload, timeout=35)
+                data = _gemini_http(f"{GEMINI_BASE}/{model}:generateContent", api_key, payload, timeout=12)
                 cand = (data.get("candidates") or [{}])[0]
                 text = "".join(p.get("text", "") for p in cand.get("content", {}).get("parts", [])).strip()
                 if not text:
@@ -158,7 +160,7 @@ def _call_gemini(prompt: str, system_prompt: str, api_key: str) -> str:
                     continue
                 if e.code in _TRANSIENT_CODES:
                     if attempt == 0:
-                        time.sleep(1.5 + random.uniform(0, 1.0))
+                        time.sleep(0.5 + random.uniform(0, 0.5))
                         continue  # one retry on the same model
                     break  # then try the next model
                 if e.code == 404:
@@ -168,7 +170,7 @@ def _call_gemini(prompt: str, system_prompt: str, api_key: str) -> str:
                 print(f"[Gemini network error] {model} attempt {attempt + 1}: {str(e)[:150]}", flush=True)
                 last_err = e
                 if attempt == 0:
-                    time.sleep(1.5 + random.uniform(0, 1.0))
+                    time.sleep(0.5 + random.uniform(0, 0.5))
                     continue
                 break
     raise last_err or RuntimeError("No Gemini model returned an answer")
