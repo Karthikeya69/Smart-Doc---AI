@@ -15,7 +15,7 @@ _ALTS = {
     "docx": ["word document", "word doc", "word file", "ms word", "docx", "word", "doc"],
     "xml": ["xml"],
     "json": ["json"],
-    "csv": ["csv"],
+    "csv": ["excel sheet", "excel file", "spreadsheet", "excel", "xlsx", "xls", "csv"],
     "txt": ["plain text", "text file", "txt"],
     "md": ["markdown", "md"],
 }
@@ -46,13 +46,19 @@ _COMPILED = {fmt: _build_pattern(fmt) for fmt in _ALTS}
 
 def detect_format(question: str):
     """Returns (format or None, question without the format phrase, export_only)."""
+    matched_fmt = None
+    clean = question
     for fmt, rx in _COMPILED.items():
-        m = rx.search(question)
+        m = rx.search(clean)
         if m:
-            clean = (question[:m.start()] + " " + question[m.end():]).strip()
-            words = re.findall(r"[a-z0-9]+", clean.lower())
-            export_only = all(w in _FILLER for w in words)
-            return fmt, (clean or question), export_only
+            if matched_fmt is None:
+                matched_fmt = fmt
+            clean = (clean[:m.start()] + " " + clean[m.end():]).strip()
+    if matched_fmt:
+        extra_fmt_words = {"excel", "xlsx", "xls", "spreadsheet", "docx", "doc", "word", "pdf", "xml", "json", "csv", "txt", "md"}
+        words = re.findall(r"[a-z0-9]+", clean.lower())
+        export_only = all(w in _FILLER or w in extra_fmt_words for w in words)
+        return matched_fmt, (clean or question), export_only
     return None, question, False
 
 
