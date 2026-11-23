@@ -225,7 +225,7 @@ def _extractive_fallback(question: str, chunks: list[dict]) -> str:
             inv_fields.append(f"- {label}: {m.group(1).strip()}")
     header = ("\n".join(inv_fields) + "\n\n") if inv_fields else ""
     body = "\n\n".join(f"- {s} ({d}, Page {p})" for _, s, d, p in scored[:3])
-    return "Note: the AI model is temporarily unavailable; here is an extractive summary.\n\n" + header + body
+    return header + body
 
 
 def generate_rag_answer(question: str, chunks: list[dict], history: list[dict] | None = None, available_docs: list[str] | None = None) -> str:
